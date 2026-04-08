@@ -1,0 +1,130 @@
+name: CyberSWISS CI – Lint, Test & Audit (Linux)
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Python lint + unit tests ──────────────────────────────────────────────
+  python-tests:
+    name: Python Lint & Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pylint
+
+      - name: Lint (pylint)
+        run: |
+          pylint common/utils.py common/runner.py common/report_generator.py \
+            --disable=C0114,C0115,C0116,R0903,W0611 \
+            --fail-under=7.0 || true
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short
+
+  # ── Bash script static analysis ───────────────────────────────────────────
+  bash-lint:
+    name: Bash Lint (shellcheck)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck on Linux scripts
+        run: |
+          find linux/ -name "*.sh" -exec shellcheck --severity=warning {} \;
+
+  # ── Linux audit scripts smoke test ───────────────────────────────────────
+  linux-smoke:
+    name: Linux Scripts Smoke Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make scripts executable
+        run: chmod +x linux/*.sh
+
+      - name: Run L01 password policy (non-root smoke)
+        run: bash linux/L01_password_policy.sh --json || true
+
+      - name: Run L07 SSH posture check (non-root)
+        run: bash linux/L07_ssh_posture.sh --json || true
+
+      - name: Run L15 CIS baseline (non-root, some checks will warn)
+        run: bash linux/L15_cis_baseline.sh --json || true
+
+      - name: Run orchestrator dry-run
+        run: python3 common/runner.py --os linux --dry-run
+
+  # ── Orchestrator integration test ─────────────────────────────────────────
+  orchestrator:
+    name: Orchestrator Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Make scripts executable
+        run: chmod +x linux/*.sh
+
+      - name: Run orchestrator – Linux, min-severity Med
+        run: |
+          python3 common/runner.py \
+            --os linux \
+            --min-severity Med \
+            --output /tmp/audit_report.json \
+            --timeout 60 \
+            || true
+
+      - name: Verify JSON report was created
+        run: |
+          python3 -c "
+          import json, sys
+          with open('/tmp/audit_report.json') as f:
+              data = json.load(f)
+          assert data.get('cyberswiss_report'), 'Missing cyberswiss_report key'
+          assert 'results' in data, 'Missing results key'
+          print(f'Report OK: {data[\"scripts_run\"]} scripts, {data[\"total_findings\"]} findings')
+          "
+
+      - name: Generate HTML report
+        run: |
+          python3 common/report_generator.py \
+            /tmp/audit_report.json \
+            --html /tmp/audit_report.html \
+            || true
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-report
+          path: |
+            /tmp/audit_report.json
+            /tmp/audit_report.html
+          if-no-files-found: warn

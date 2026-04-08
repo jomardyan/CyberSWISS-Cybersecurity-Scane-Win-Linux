@@ -1,0 +1,28 @@
+# CyberSWISS – Python dependencies
+# Install with: pip install -r requirements.txt
+#
+# IMPORTANT:
+# This file covers Python packages only.
+# Many CyberSWISS audit scripts also rely on OS-level components such as:
+#   - Linux: curl, openssl, nmap, nikto, auditd/auditctl, ufw/firewalld,
+#     iptables/nftables, cryptsetup, mokutil, rsyslog, logrotate, docker,
+#     terraform, kubectl, helm, ansible, mysql/psql/redis clients, aide, clamav
+#   - Windows: PowerShell 5.1+, Windows Defender Firewall cmdlets, RSAT AD
+#     module, WebAdministration module, python/pip, node/npm, dotnet, choco
+#
+# See docs/RUNTIME_REQUIREMENTS.md for the full platform dependency list.
+
+# Core (always required)
+colorama>=0.4.6
+
+# Optional: GUI
+# tkinter is part of the Python standard library on most systems
+
+# Optional: Streamlit GUI alternative
+# streamlit>=1.32.0
+
+# Optional: REST API server (common/api.py)
+# flask>=3.0.0
+
+# Development / testing
+pytest>=8.0.0
