@@ -1,7 +1,16 @@
 # CyberSWISS Script Catalog
 
-> **Internal Use Only** – Defense-Grade Security Audit Platform  
-> All scripts are read-only by default. Remediation requires explicit `--fix` flag with administrative approval.
+> **Internal Use Only** — Defense-Grade Security Audit Platform  
+> All scripts are read-only by default. Remediation requires an explicit `--fix` / `-Fix` flag with administrative approval.
+
+---
+
+## Table of Contents
+
+- [Windows Scripts (28)](#windows-scripts-28-powershell-scripts)
+- [Linux Scripts (28)](#linux-scripts-28-bash-scripts)
+- [Severity Levels](#severity-levels)
+- [Runtime Notes](#runtime-notes)
 
 ---
 
@@ -80,15 +89,19 @@
 ## Runtime Notes
 
 - Full script coverage requires OS-level tooling in addition to Python packages.
-- See [RUNTIME_REQUIREMENTS.md](/home/jomar/infrascan/CyberSWISS---Cybersecurity-Scaner-/docs/RUNTIME_REQUIREMENTS.md) for the runtime matrix.
-- Bootstrap installers are available at [install_runtime_linux.sh](/home/jomar/infrascan/CyberSWISS---Cybersecurity-Scaner-/setup/install_runtime_linux.sh) and [install_runtime_windows.ps1](/home/jomar/infrascan/CyberSWISS---Cybersecurity-Scaner-/setup/install_runtime_windows.ps1).
+- See [RUNTIME_REQUIREMENTS.md](RUNTIME_REQUIREMENTS.md) for the complete runtime dependency matrix.
+- Bootstrap installers are available:
+  - Linux: `sudo ./setup/install_runtime_linux.sh --optional --yes`
+  - Windows: `PowerShell -ExecutionPolicy Bypass -File .\setup\install_runtime_windows.ps1 -Optional`
 
 ## GUI Notes
 
-- The GUI supports stop control, rerun-failed workflows, multi-format snapshots, and tooltip help.
-- In `Fix Mode`, the GUI now re-runs each script after remediation and reports verified outcomes: what was fixed, what remains, and whether verification failed.
+- The GUI supports run/stop control, rerun-failed workflows, multi-format snapshot export, and per-script tooltip help.
+- In Fix Mode, the GUI re-runs each script after remediation and reports verified outcomes: what was fixed, what still fails, and whether verification passed.
 
 ---
+
+## Severity Levels
 
 | Level | Description |
 |-------|-------------|

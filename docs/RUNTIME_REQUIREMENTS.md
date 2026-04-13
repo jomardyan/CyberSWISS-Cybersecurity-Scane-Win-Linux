@@ -1,16 +1,29 @@
 # CyberSWISS Runtime Requirements
 
+> This document lists all dependencies required for full script coverage.  
+> `pip install -r requirements.txt` installs Python packages only and is not sufficient for complete audit results.
+
+---
+
+## Table of Contents
+
+- [Core Requirements](#core-requirements)
+- [Linux Components](#linux-components)
+- [Windows Components](#windows-components)
+- [Script Family to Tool Mapping](#script-family-to-tool-mapping)
+- [Practical Limitations](#practical-limitation)
+
+---
+
 This repository has two dependency layers:
 
-1. Python packages from [`requirements.txt`](/home/jomar/infrascan/CyberSWISS---Cybersecurity-Scaner-/requirements.txt)
+1. Python packages from [`requirements.txt`](../requirements.txt)
 2. OS-level tools used by the audit scripts themselves
-
-`pip install -r requirements.txt` is necessary, but it is not sufficient for full script coverage.
 
 Bootstrap scripts are included for convenience:
 
-- Linux: [`setup/install_runtime_linux.sh`](/home/jomar/infrascan/CyberSWISS---Cybersecurity-Scaner-/setup/install_runtime_linux.sh)
-- Windows: [`setup/install_runtime_windows.ps1`](/home/jomar/infrascan/CyberSWISS---Cybersecurity-Scaner-/setup/install_runtime_windows.ps1)
+- Linux: [`setup/install_runtime_linux.sh`](../setup/install_runtime_linux.sh)
+- Windows: [`setup/install_runtime_windows.ps1`](../setup/install_runtime_windows.ps1)
 
 ## Core Requirements
 

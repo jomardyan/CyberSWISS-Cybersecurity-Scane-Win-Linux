@@ -1,11 +1,27 @@
 # CyberSWISS Usage Guide
 
+> Detailed instructions for running audits, generating reports, integrating with CI/CD and SIEM systems, and scheduling automated scans.
+
+---
+
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [Advanced Usage Examples](#advanced-usage-examples)
+- [CLI Reference](#cli-reference)
+- [SIEM Integration](#siem-integration)
+- [Scheduling & Automation](#scheduling--automation)
+- [Security Notes](#security-notes)
+
+---
+
 ## Prerequisites
 
 ### Common
 - Python 3.9+
 - `pip install -r requirements.txt`
-- Full OS/runtime dependency list: [RUNTIME_REQUIREMENTS.md](/home/jomar/infrascan/CyberSWISS---Cybersecurity-Scaner-/docs/RUNTIME_REQUIREMENTS.md)
+- Full OS/runtime dependency list: [RUNTIME_REQUIREMENTS.md](RUNTIME_REQUIREMENTS.md)
 - Bootstrap installers:
   - Linux: `sudo ./setup/install_runtime_linux.sh --optional --yes`
   - Windows: `PowerShell -ExecutionPolicy Bypass -File .\setup\install_runtime_windows.ps1 -Optional`
@@ -145,7 +161,7 @@ curl -s http://localhost:8080/api/v1/history | python3 -m json.tool
 
 ### Windows + Linux Combined Audit
 ```powershell
-# Run all 52 scripts (both Windows and Linux) with drift tracking
+# Run all 56 scripts (both Windows and Linux) with drift tracking
 python .\common\runner.py --os both \
   --save-db \
   --output reports/full_audit.json \
@@ -264,7 +280,7 @@ sudo bash linux/L15_cis_baseline.sh --json | curl -s -XPOST \
 
 ---
 
-## Scheduling / Automation
+## Scheduling & Automation
 
 ### Linux (cron)
 ```cron

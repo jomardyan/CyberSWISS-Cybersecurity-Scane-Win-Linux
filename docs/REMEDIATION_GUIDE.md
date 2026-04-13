@@ -5,6 +5,32 @@
 
 ---
 
+## Table of Contents
+
+- [Quick Reference](#quick-reference)
+- [Accounts & Authentication](#accounts--authentication)
+- [Patch Management](#patch-management)
+- [Services Hardening](#services-hardening)
+- [Network Hardening](#network-hardening)
+- [Logging & Auditing](#logging--auditing)
+- [Encryption](#encryption)
+- [Malware Protections](#malware-protections)
+- [Registry & OS Hardening](#registry--os-hardening)
+- [Active Directory & GPO (W16)](#advanced-remediation-active-directory--gpo-w16)
+- [OpenVAS / External Scanning (L23, W23)](#advanced-remediation-openvas--external-scanning-l23-w23)
+- [Web Vulnerability Scanning (L24, W24)](#advanced-remediation-web-vulnerability-scanning-l24-w24)
+- [SQL Injection Scanning (L25, W25)](#advanced-remediation-sql-injection-scanning-l25-w25)
+- [SAST / SCA Scanning (L26, W26)](#advanced-remediation-sast--sca-scanning-l26-w26)
+- [DNS Resolution Security (L27, W27)](#advanced-remediation-dns-resolution-security-l27-w27)
+- [Backup & Recovery Resilience (L28, W28)](#advanced-remediation-backup--recovery-resilience-l28-w28)
+- [Vulnerability & Risk Scanning (L21, W21)](#advanced-remediation-vulnerability--risk-scanning-l21-w21)
+- [Secrets & Credentials Scanning (L16, W17)](#advanced-remediation-secrets--credentials-scanning-l16-w17)
+- [IaC Security Scanning (L19, W20)](#advanced-remediation-iac-security-scanning-l19-w20)
+- [Compliance Automation (L22, W22)](#advanced-remediation-compliance-automation-l22-w22)
+- [Disclaimer](#disclaimer)
+
+---
+
 ## Quick Reference
 
 CyberSWISS provides automatic remediation via the `--fix` / `-Fix` flag:
@@ -13,13 +39,13 @@ CyberSWISS provides automatic remediation via the `--fix` / `-Fix` flag:
 # Linux: Apply all opt-in fixes
 sudo python3 common/runner.py --os linux --fix
 
-# Windows: Apply all opt-in fixes  
+# Windows: Apply all opt-in fixes
 python .\common\runner.py --os windows -Fix
 ```
 
-Scripts with fix support are marked with ✅. Read-only scripts (marked ❌) provide guidance only and cannot auto-remediate.
+Scripts with fix support apply changes automatically when the flag is provided. Read-only scripts provide guidance only and cannot auto-remediate.
 
-For host preparation before remediation, use the bootstrap installers documented in [RUNTIME_REQUIREMENTS.md](/home/jomar/infrascan/CyberSWISS---Cybersecurity-Scaner-/docs/RUNTIME_REQUIREMENTS.md):
+For host preparation before remediation, use the bootstrap installers documented in [RUNTIME_REQUIREMENTS.md](RUNTIME_REQUIREMENTS.md):
 
 ```bash
 sudo ./setup/install_runtime_linux.sh --optional --yes
@@ -315,14 +341,6 @@ sysctl --system
 
 ---
 
-## Disclaimer
-
-- Automatic remediation coverage varies by script and by host capabilities.
-- Some scripts only provide guidance even when a fix flag exists.
-- A successful remediation command does not guarantee the target control is fully compliant until a verification audit passes.
-
----
-
 ## Advanced Remediation: Active Directory & GPO (W16)
 
 ### Deploy CyberSWISS as GPO Startup Script
@@ -375,6 +393,284 @@ reg add "HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters" `
 # Enforce AES on domain controllers
 reg add "HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Parameters" `
         /v KdcSupportedEncryptionTypes /t REG_DWORD /d 0xFFFFFFF4 /f
+```
+
+---
+
+## Advanced Remediation: OpenVAS / External Scanning (L23, W23)
+
+### Install and Configure OpenVAS / GVM
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y openvas
+sudo gvm-setup
+sudo gvm-start
+
+# Access the web UI
+# https://localhost:9392
+```
+
+### Run a Targeted Scan via CLI
+
+```bash
+# List available scan configs
+gvm-cli socket --xml '<get_configs/>'
+
+# Create a target and start a task
+gvm-cli socket --xml '<create_target><name>localhost</name><hosts>127.0.0.1</hosts></create_target>'
+```
+
+### Windows — Run Nessus / Tenable via CLI
+
+```powershell
+# Export findings from Tenable.io
+$Headers = @{ "X-ApiKeys" = "accessKey=$env:TENABLE_ACCESS_KEY; secretKey=$env:TENABLE_SECRET_KEY" }
+Invoke-RestMethod -Uri "https://cloud.tenable.com/scans" -Headers $Headers
+```
+
+---
+
+## Advanced Remediation: Web Vulnerability Scanning (L24, W24)
+
+### Harden HTTP Security Headers
+
+**Nginx:**
+```nginx
+add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+add_header X-Frame-Options DENY always;
+add_header X-Content-Type-Options nosniff always;
+add_header Content-Security-Policy "default-src 'self'" always;
+add_header Referrer-Policy "no-referrer-when-downgrade" always;
+```
+
+**Apache:**
+```apache
+Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+Header always set X-Frame-Options "DENY"
+Header always set X-Content-Type-Options "nosniff"
+Header always set Content-Security-Policy "default-src 'self'"
+```
+
+**IIS (Windows):**
+```powershell
+Add-WebConfigurationProperty -PSPath 'IIS:\' `
+  -Filter 'system.webServer/httpProtocol/customHeaders' `
+  -Name '.' `
+  -Value @{name='X-Frame-Options';value='DENY'}
+```
+
+### Disable TRACE / TRACK HTTP Methods
+
+**Apache:**
+```apache
+TraceEnable Off
+```
+
+**Nginx:**
+```nginx
+if ($request_method = TRACE) { return 405; }
+```
+
+---
+
+## Advanced Remediation: SQL Injection Scanning (L25, W25)
+
+### Prevent SQL Injection
+
+**Use parameterized queries:**
+
+```python
+# Python (psycopg2)
+cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+```
+
+```java
+// Java (JDBC)
+PreparedStatement stmt = conn.prepareStatement("SELECT * FROM users WHERE id = ?");
+stmt.setInt(1, userId);
+```
+
+### Restrict Database Error Responses
+
+**MySQL:**
+```sql
+-- Never expose SQL errors to end users; use application-level error handling
+SET GLOBAL general_log = 'OFF';
+```
+
+**PostgreSQL — disable verbose errors in production:**
+```ini
+# postgresql.conf
+client_min_messages = warning
+log_min_error_statement = error
+```
+
+### Limit Database Exposure
+
+```bash
+# Bind MySQL to localhost only
+# /etc/mysql/mysql.conf.d/mysqld.cnf
+bind-address = 127.0.0.1
+
+# Restrict remote PostgreSQL connections
+# /etc/postgresql/*/main/pg_hba.conf
+host all all 0.0.0.0/0 reject
+```
+
+---
+
+## Advanced Remediation: SAST / SCA Scanning (L26, W26)
+
+### Run Static Analysis Locally
+
+```bash
+# Python — Bandit
+pip install bandit
+bandit -r ./src -ll
+
+# Multi-language — Semgrep
+pip install semgrep
+semgrep --config=auto ./src
+```
+
+### Audit and Fix Vulnerable Dependencies
+
+```bash
+# Python
+pip install pip-audit
+pip-audit
+
+# Node.js
+npm audit
+npm audit fix
+
+# Ruby
+gem install bundler-audit
+bundle-audit check --update
+```
+
+### Pin Dependency Versions
+
+```txt
+# requirements.txt — pin to exact version, not wildcards
+requests==2.31.0
+cryptography==42.0.5
+```
+
+```json
+// package.json — avoid ^ or ~ for production dependencies
+"dependencies": {
+  "express": "4.18.2"
+}
+```
+
+---
+
+## Advanced Remediation: DNS Resolution Security (L27, W27)
+
+### Disable LLMNR and NetBIOS (Windows)
+
+```powershell
+# Disable LLMNR via Group Policy or registry
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" /v EnableMulticast /t REG_DWORD /d 0 /f
+
+# Disable NetBIOS over TCP/IP on all adapters
+$adapters = Get-WmiObject Win32_NetworkAdapterConfiguration -Filter "IPEnabled=True"
+$adapters | ForEach-Object { $_.SetTcpipNetbios(2) }
+```
+
+### Enable DNS-over-HTTPS / DNS-over-TLS (Linux)
+
+```bash
+# systemd-resolved — enable DoH / DoT
+# /etc/systemd/resolved.conf
+[Resolve]
+DNS=1.1.1.1#cloudflare-dns.com 8.8.8.8#dns.google
+DNSOverTLS=yes
+DNSSEC=yes
+
+systemctl restart systemd-resolved
+```
+
+### Validate DNSSEC
+
+```bash
+# Test DNSSEC validation
+dig @8.8.8.8 +dnssec example.com
+
+# Check for SERVFAIL on tampered responses (expected behaviour with DNSSEC)
+dig @1.1.1.1 +dnssec dnssec-failed.org
+```
+
+### Harden SPF / DKIM / DMARC
+
+```dns
+; SPF record — authorize only listed senders
+domain.com. TXT "v=spf1 include:_spf.google.com ~all"
+
+; DMARC record — reject unauthenticated mail
+_dmarc.domain.com. TXT "v=DMARC1; p=reject; rua=mailto:dmarc@domain.com"
+```
+
+---
+
+## Advanced Remediation: Backup & Recovery Resilience (L28, W28)
+
+### Implement Automated Backups (Linux)
+
+```bash
+# Install restic
+apt-get install restic
+
+# Initialize a repository
+restic -r /mnt/backups/myrepo init
+
+# Back up /data daily
+restic -r /mnt/backups/myrepo backup /data
+
+# Schedule via cron
+echo '0 1 * * * root restic -r /mnt/backups/myrepo backup /data >> /var/log/restic.log 2>&1' \
+  > /etc/cron.d/restic-backup
+
+# Verify backup integrity weekly
+echo '0 3 * * 0 root restic -r /mnt/backups/myrepo check >> /var/log/restic.log 2>&1' \
+  >> /etc/cron.d/restic-backup
+```
+
+### Implement Automated Backups (Windows)
+
+```powershell
+# Windows Server Backup
+wbadmin start backup -backupTarget:E: -include:C: -allCritical -quiet
+
+# Schedule via Task Scheduler
+$trigger = New-ScheduledTaskTrigger -Daily -At 01:00
+$action  = New-ScheduledTaskAction -Execute 'wbadmin.exe' `
+           -Argument 'start backup -backupTarget:E: -include:C: -allCritical -quiet'
+Register-ScheduledTask -TaskName 'DailyBackup' -Trigger $trigger -Action $action -RunLevel Highest
+```
+
+### Off-Host / Offsite Backup
+
+```bash
+# Sync backups to S3 with encryption
+restic -r s3:s3.amazonaws.com/mybucket/myrepo \
+  --password-file /etc/restic/password \
+  backup /data
+
+# Enforce 3-2-1 rule:
+# 3 copies, on 2 different media types, 1 offsite
+```
+
+### Test Restore Procedure
+
+```bash
+# Restore a specific file from a snapshot
+restic -r /mnt/backups/myrepo restore latest --target /tmp/restore-test --path /data/important.txt
+
+# Verify the restored file
+diff /data/important.txt /tmp/restore-test/data/important.txt && echo "Restore verified"
 ```
 
 ---
