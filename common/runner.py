@@ -457,14 +457,16 @@ def print_script_result(
         if fix_report.get("verification_error"):
             print(_c(f"    ⚠ Fix verification failed: {fix_report['verification_error']}", _STATUS_STYLE['WARN'], no_colour))
         else:
-            print(
-                _c(
-                    f"    ↳ Fix: fixed {fix_report.get('fixed_count', 0)}  "
-                    f"remaining {fix_report.get('remaining_count', 0)}  "
-                    f"new issues {fix_report.get('new_issue_count', 0)}",
-                    "\033[0;36m", no_colour,
-                )
-            )
+            n_fixed     = fix_report.get("fixed_count", 0)
+            n_remaining = fix_report.get("remaining_count", 0)
+            n_new       = fix_report.get("new_issue_count", 0)
+
+            fixed_badge  = _c(f"✓ {n_fixed} fixed",     "\033[1;32m" if n_fixed     else _DIM, no_colour)
+            remain_badge = _c(f"⚠ {n_remaining} remaining", "\033[1;33m" if n_remaining else _DIM, no_colour)
+            new_badge    = _c(f"✗ {n_new} new",          "\033[1;31m" if n_new       else _DIM, no_colour)
+
+            label = _c("    ↳ Fix result:", "\033[0;36m", no_colour)
+            print(f"{label}  {fixed_badge}   {remain_badge}   {new_badge}")
     return total, fails, warns
 
 

@@ -161,10 +161,10 @@ curl -s http://localhost:8080/api/v1/history | python3 -m json.tool
 
 ### Windows + Linux Combined Audit
 ```powershell
-# Run all 56 scripts (both Windows and Linux) with drift tracking
-python .\common\runner.py --os both \
-  --save-db \
-  --output reports/full_audit.json \
+# Run all 66 scripts (both Windows and Linux) with drift tracking
+python .\common\runner.py --os both `
+  --save-db `
+  --output reports/full_audit.json `
   --html reports/full_audit.html
 ```
 

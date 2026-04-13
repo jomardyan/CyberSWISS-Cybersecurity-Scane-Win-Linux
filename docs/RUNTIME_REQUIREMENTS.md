@@ -167,6 +167,11 @@ Useful mapping for missing findings:
 - `L23`: `openvas` / `gvm`, `nessus`, `openssl`
 - `L27`: `systemd-resolved` / `resolvectl`, optionally `unbound`, `ss`
 - `L28`: backup tooling such as `restic`/`borg`/`rsnapshot`, plus snapshot tools like `snapper`, `timeshift`, `zfs`, `btrfs-progs`, `lvm2`
+- `L29`: `getcap` (part of `libcap2-bin` on Debian/Ubuntu), `sudo` policy files
+- `L30`: standard userland (no extra tools required)
+- `L31`: `coredumpctl` (part of `systemd`), `capsh` (part of `libcap2-bin`), standard userland
+- `L32`: `lsmod`, `usbguard` (optional, for policy enforcement), standard `udevadm`
+- `L33`: `auditd`, `avml` or `LiME` for memory acquisition (optional), `volatility3` (optional), remote syslog daemon
 
 ## Practical Limitation
 

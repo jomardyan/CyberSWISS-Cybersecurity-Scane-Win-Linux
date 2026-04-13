@@ -27,6 +27,11 @@
 - [Secrets & Credentials Scanning (L16, W17)](#advanced-remediation-secrets--credentials-scanning-l16-w17)
 - [IaC Security Scanning (L19, W20)](#advanced-remediation-iac-security-scanning-l19-w20)
 - [Compliance Automation (L22, W22)](#advanced-remediation-compliance-automation-l22-w22)
+- [Privilege Escalation Posture (L29, W29)](#advanced-remediation-privilege-escalation-posture-l29-w29)
+- [Deep Persistence Detection (L30, W30)](#advanced-remediation-deep-persistence-detection-l30-w30)
+- [Credential Theft Hardening (L31, W31)](#advanced-remediation-credential-theft-hardening-l31-w31)
+- [USB & Removable Media Control (L32, W32)](#advanced-remediation-usb--removable-media-control-l32-w32)
+- [Incident Response Readiness (L33, W33)](#advanced-remediation-incident-response-readiness-l33-w33)
 - [Disclaimer](#disclaimer)
 
 ---
@@ -869,6 +874,248 @@ with open('compliance_dashboard.csv', 'w') as out:
             mapping.get('gdpr', 'N/A')
         ])
 "
+```
+
+---
+
+---
+
+## Advanced Remediation: Privilege Escalation Posture (L29, W29)
+
+### Disable AlwaysInstallElevated (Windows)
+
+```powershell
+# Remove the registry keys that allow MSI to install with SYSTEM privileges
+Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer' -Name 'AlwaysInstallElevated' -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\Installer' -Name 'AlwaysInstallElevated' -ErrorAction SilentlyContinue
+```
+
+### Enforce UAC Prompting (Windows)
+
+```powershell
+# Require credential prompt for admin operations (no silent elevation)
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'EnableLUA' -Value 1
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'ConsentPromptBehaviorAdmin' -Value 2
+```
+
+### Remove NOPASSWD sudo entries (Linux)
+
+```bash
+# Audit and remove NOPASSWD grants from sudoers
+sudo visudo   # remove or comment-out lines containing NOPASSWD
+# Alternatively, remove individual drop-in files:
+sudo rm /etc/sudoers.d/<offending-file>
+```
+
+### Fix writable PATH directories owned by root (Linux)
+
+```bash
+# Remove world-write permission from directories in root's PATH
+chmod o-w /path/to/directory
+```
+
+### Remove dangerous SUID bits (Linux – GTFOBins)
+
+```bash
+# Remove the setuid bit from a binary (test impact first)
+sudo chmod u-s /path/to/binary
+```
+
+---
+
+## Advanced Remediation: Deep Persistence Detection (L30, W30)
+
+### Disable LoadAppInit_DLLs (Windows)
+
+```powershell
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows' -Name 'LoadAppInit_DLLs' -Value 0
+```
+
+### Clear AppInit_DLLs (Windows)
+
+```powershell
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows' -Name 'AppInit_DLLs' -Value ''
+```
+
+### Remove suspicious Image File Execution Options (Windows)
+
+```powershell
+# Remove a debugger shim from a target process (replace notepad.exe with the actual target)
+Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\notepad.exe' -Name 'Debugger'
+```
+
+### Review user-level systemd units (Linux)
+
+```bash
+# List and review all user-level service units
+systemctl --user list-unit-files --type=service
+# Disable any unknown service
+systemctl --user disable --now <unit-name>
+```
+
+### Check shell profile backdoors (Linux)
+
+```bash
+# Audit profile files for unexpected commands
+cat ~/.bashrc ~/.bash_profile ~/.profile /etc/profile /etc/profile.d/*.sh
+# Remove any unexpected lines and reset LD_PRELOAD
+unset LD_PRELOAD
+# Remove offending profile.d scripts
+sudo rm /etc/profile.d/<suspicious>.sh
+```
+
+---
+
+## Advanced Remediation: Credential Theft Hardening (L31, W31)
+
+### Disable WDigest cleartext credential caching (Windows)
+
+```powershell
+Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest' -Name 'UseLogonCredential' -Value 0
+```
+
+### Enable LSASS Protected Process Light (Windows)
+
+```powershell
+Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'RunAsPPL' -Value 1
+# Requires a reboot to take effect
+```
+
+### Enforce NTLMv2 (Windows)
+
+```powershell
+Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'LmCompatibilityLevel' -Value 5
+```
+
+### Reduce cached logon count (Windows)
+
+```powershell
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'CachedLogonsCount' -Value '1'
+```
+
+### Set ptrace_scope to restrict process memory reads (Linux)
+
+```bash
+echo 'kernel.yama.ptrace_scope = 1' | sudo tee /etc/sysctl.d/99-ptrace.conf
+sudo sysctl -p /etc/sysctl.d/99-ptrace.conf
+```
+
+### Disable core dumps (Linux)
+
+```bash
+# /etc/security/limits.conf
+echo '* hard core 0' | sudo tee -a /etc/security/limits.conf
+echo 'fs.suid_dumpable = 0' | sudo tee -a /etc/sysctl.d/99-coredump.conf
+sudo sysctl -p /etc/sysctl.d/99-coredump.conf
+```
+
+---
+
+## Advanced Remediation: USB & Removable Media Control (L32, W32)
+
+### Disable USB mass storage module (Linux)
+
+```bash
+echo 'blacklist usb_storage' | sudo tee /etc/modprobe.d/disable-usb-storage.conf
+echo 'install usb_storage /bin/true' | sudo tee -a /etc/modprobe.d/disable-usb-storage.conf
+sudo update-initramfs -u   # Debian/Ubuntu
+# Or: sudo dracut --force   # RHEL/Fedora
+```
+
+### Disable AutoRun entirely (Windows)
+
+```powershell
+# Disable AutoRun for all drive types
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' -Name 'NoDriveTypeAutoRun' -Value 0xFF
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' -Name 'DisableAutoplay' -Value 1
+```
+
+### Block USB write access via Group Policy (Windows)
+
+```
+Computer Configuration > Administrative Templates > System > Removable Storage Access
+  > Removable Disks: Deny write access – Enabled
+```
+
+Or registry:
+```powershell
+$usbKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}'
+New-Item -Path $usbKey -Force | Out-Null
+Set-ItemProperty -Path $usbKey -Name 'Deny_Write' -Value 1
+```
+
+### Install USBGuard (Linux)
+
+```bash
+sudo apt-get install -y usbguard
+# Generate a policy that whitelists currently connected devices
+sudo usbguard generate-policy | sudo tee /etc/usbguard/rules.conf
+sudo systemctl enable --now usbguard
+```
+
+---
+
+## Advanced Remediation: Incident Response Readiness (L33, W33)
+
+### Enable PowerShell Script Block Logging (Windows)
+
+```powershell
+$psLogKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'
+New-Item -Path $psLogKey -Force | Out-Null
+Set-ItemProperty -Path $psLogKey -Name 'EnableScriptBlockLogging' -Value 1
+```
+
+### Enable PowerShell Module Logging (Windows)
+
+```powershell
+$modLogKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging'
+New-Item -Path $modLogKey -Force | Out-Null
+Set-ItemProperty -Path $modLogKey -Name 'EnableModuleLogging' -Value 1
+```
+
+### Increase Security event log size (Windows)
+
+```powershell
+# Set Security log to 1 GB
+wevtutil sl Security /ms:1073741824
+```
+
+### Configure WEF subscription (Windows)
+
+```powershell
+# Point Security log to a central collector
+$subscriptionKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\EventLog\EventForwarding\SubscriptionManager'
+New-Item -Path $subscriptionKey -Force | Out-Null
+Set-ItemProperty -Path $subscriptionKey -Name '1' -Value 'Server=http://<collector>:5985/wsman/SubscriptionManager/WEC,Refresh=60'
+```
+
+### Ensure auditd is running (Linux)
+
+```bash
+sudo apt-get install -y auditd
+sudo systemctl enable --now auditd
+```
+
+### Configure remote log forwarding (Linux)
+
+```bash
+# rsyslog: forward to a remote SIEM
+echo '*.* @<siem-host>:514' | sudo tee /etc/rsyslog.d/99-remote.conf
+sudo systemctl restart rsyslog
+```
+
+### Install forensic triage tools (Linux)
+
+```bash
+sudo apt-get install -y lsof strace tcpdump chkrootkit volatility3
+```
+
+### Sync system clock (Linux)
+
+```bash
+sudo systemctl enable --now systemd-timesyncd
+# Or for ntpd:
+sudo apt-get install -y ntp && sudo systemctl enable --now ntp
 ```
 
 ---

@@ -7,16 +7,16 @@
 
 ## Table of Contents
 
-- [Windows Scripts (28)](#windows-scripts-28-powershell-scripts)
-- [Linux Scripts (28)](#linux-scripts-28-bash-scripts)
+- [Windows Scripts (33)](#windows-scripts-33-powershell-scripts)
+- [Linux Scripts (33)](#linux-scripts-33-bash-scripts)
 - [Severity Levels](#severity-levels)
 - [Runtime Notes](#runtime-notes)
 
 ---
 
-## Complete Script Index (56 Scripts)
+## Complete Script Index (66 Scripts)
 
-## Windows Scripts (28 PowerShell Scripts)
+## Windows Scripts (33 PowerShell Scripts)
 
 | ID  | Name | Category | Severity | Admin | Description |
 |-----|------|----------|----------|-------|-------------|
@@ -48,10 +48,15 @@
 | W26 | SAST / SCA Scanner | DevSecOps | High | Y | Reviews local source trees and dependency metadata for insecure coding patterns, vulnerable package versions, wildcard pins, and CI/CD security gaps. |
 | W27 | DNS Resolution Security | Network Exposure | High | Y | Reviews Windows DNS client posture, trusted resolver selection, LLMNR/Smart Multi-Homed Name Resolution, NetBIOS over TCP/IP, DoH readiness, and port 53 listener exposure. Can disable LLMNR and Smart Multi-Homed Name Resolution with `-Fix`. |
 | W28 | Backup and Recovery Resilience | Resilience & Recovery | High | Y | Audits backup tooling, recent backup evidence, ransomware-resilience controls, restore point and VSS coverage, backup repository ACLs, and backup location separation. |
+| W29 | Privilege Escalation Posture | PrivEsc Prevention | Critical | Y | Detects unquoted service paths, writable service binaries, AlwaysInstallElevated registry keys, writable system PATH dirs, UAC disabled, auto-logon credentials, and SeImpersonatePrivilege abuse vectors. Can disable AlwaysInstallElevated and enforce UAC with `-Fix`. |
+| W30 | Deep Persistence Detection | Persistence Mechanisms | Critical | Y | Hunts persistence beyond scheduled tasks: suspicious Registry Run/RunOnce keys (HKLM/HKCU/WOW6432), WMI event subscription bindings, startup folder items, AppInit_DLLs, IFEO debugger hijacks, recently modified System32 binaries, and suspicious PowerShell profile files. Can disable LoadAppInit_DLLs with `-Fix`. |
+| W31 | Credential Theft Hardening | Credential Protection | Critical | Y | Audits WDigest plain-text caching, LSASS PPL protection, Credential Guard, cached logon count, NTLM authentication level, SAM remote access restrictions, Windows Credential Manager secrets, and AutoLogon registry credentials. Can disable WDigest, enforce NTLMv2, and reduce cached credentials with `-Fix`. |
+| W32 | USB & Removable Media Control | Endpoint Controls | High | Y | Checks AutoRun/AutoPlay policy, removable storage write access GPO, USB device history in registry, BitLocker To Go enforcement, and Windows Portable Device write restrictions. Can disable AutoRun with `-Fix`. |
+| W33 | Incident Response Readiness | Detection & Response | High | Y | Assesses IR capability: Sysmon presence, PowerShell Script Block/Module logging, WEF forwarding, Security Event Log retention size, Windows Time service, memory dump configuration, and core triage tool availability. Can enable Script Block Logging and W32Time with `-Fix`. |
 
 ---
 
-## Linux Scripts (28 Bash Scripts)
+## Linux Scripts (33 Bash Scripts)
 
 | ID  | Name | Category | Severity | Admin | Description |
 |-----|------|----------|----------|-------|-------------|
@@ -83,6 +88,11 @@
 | L26 | SAST / SCA Scanner | DevSecOps | High | Y | Scans source trees, dependency locks, and package metadata for insecure patterns, vulnerable dependencies, and remediation opportunities. |
 | L27 | DNS Resolution Security | Network Exposure | High | Y | Reviews resolver file permissions, upstream DNS trust profile, DNSSEC, encrypted DNS transport, multicast name-resolution exposure, and port 53 listener exposure. Can harden selected `systemd-resolved` settings with `--fix`. |
 | L28 | Backup and Recovery Resilience | Resilience & Recovery | High | Y | Audits backup tooling and schedules, recent backup evidence, local backup storage permissions, snapshot coverage, off-host backup indicators, and failed backup services. |
+| L29 | Privilege Escalation Posture | PrivEsc Prevention | Critical | Y | Detects NOPASSWD sudo entries, writable root PATH dirs, writable systemd units, polkit CVE-2021-4034 exposure, SUID on GTFOBins binaries, outdated kernel, dangerous capabilities, writable /etc/passwd|shadow|sudoers, Docker group abuse, and NFS no_root_squash exports. Can remove other-write from writable systemd units with `--fix`. |
+| L30 | Deep Persistence Detection | Persistence Mechanisms | Critical | Y | Hunts persistence beyond cron: suspicious user-level systemd units, shell profile backdoors (.bashrc/.profile/.zshrc), LD_PRELOAD/ld.so.preload abuse, PAM module tampering, suspicious /etc/profile.d scripts, non-standard AuthorizedKeysFile locations, recently modified system binaries, and suspicious git hooks. |
+| L31 | Credential Theft Hardening | Credential Protection | Critical | Y | Audits password hash algorithm (SHA-512/yescrypt), /etc/shadow permissions, SSH private key permissions, unencrypted SSH keys, sudo credential cache timeout, core dump exposure, cleartext credentials in config files, SSH agent forwarding, shell history credential keywords, and ptrace_scope. Can set ptrace_scope=1 and disable core dumps with `--fix`. |
+| L32 | USB & Removable Media Control | Endpoint Controls | High | Y | Checks usb_storage module state and blacklist, recent USB device activity in syslog, usbguard daemon status, removable media automount configuration, fstab entries lacking noexec/nosuid, and world-writable removable mount points. Can blacklist usb_storage with `--fix`. |
+| L33 | Incident Response Readiness | Detection & Response | High | Y | Assesses IR capability: auditd status and rule count, remote log forwarding (rsyslog/syslog-ng), journal retention, NTP/time-sync presence, coredump collection, forensic triage tool availability, memory acquisition tools (AVML/LiME), IR documentation on endpoint, and Sysmon for Linux. Can enable systemd-timesyncd with `--fix`. |
 
 ---
 
@@ -124,3 +134,7 @@
 - **Persistence** – Scheduled tasks, cron jobs, startup scripts, registry run keys
 - **Baseline Hardening** – CIS-inspired sysctl, registry, and OS configuration checks
 - **Resilience & Recovery** – Backup coverage, restore paths, snapshot posture, and ransomware recovery readiness
+- **PrivEsc Prevention** – Privilege escalation attack paths: SUID, unquoted paths, writable service binaries, AlwaysInstallElevated
+- **Credential Protection** – Credential exposure hardening: WDigest, LSASS PPL, hash algorithms, key permissions
+- **Endpoint Controls** – Device-level controls: USB policy, removable media, AutoRun, BitLocker To Go
+- **Detection & Response** – IR readiness: Sysmon, PowerShell logging, WEF, retention, triage tools

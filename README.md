@@ -16,6 +16,7 @@
 ## Table of Contents
 
 - [Overview](#overview)
+- [Business Value](#business-value)
 - [Key Features](#key-features)
 - [Repository Structure](#repository-structure)
 - [Quick Start](#quick-start)
@@ -30,8 +31,8 @@
 - [Make / Developer Workflow](#make--developer-workflow)
 - [REST API Reference](#rest-api-reference)
 - [Script Catalog](#script-catalog)
-  - [Windows PowerShell Scripts (28)](#windows-powershell-scripts-28)
-  - [Linux Bash Scripts (28)](#linux-bash-scripts-28)
+  - [Windows PowerShell Scripts (33)](#windows-powershell-scripts-33)
+  - [Linux Bash Scripts (33)](#linux-bash-scripts-33)
 - [Active Directory & GPO Integration](#active-directory--gpo-integration)
 - [Drift Detection Detail](#drift-detection-detail)
 - [GitHub Actions CI/CD](#github-actions-cicd)
@@ -47,7 +48,7 @@
 
 ## Overview
 
-**CyberSWISS** is a production-grade, cross-platform security audit and remediation platform built for endpoints, servers, and Active Directory environments. It provides **56 runnable audit scripts** (28 Windows PowerShell + 28 Linux Bash), a Python orchestrator, REST API server, SQLite scan history with drift detection, multi-format reporting (HTML, JSON, CSV, plain-text), and a Tkinter GUI — all following a unified interface.
+**CyberSWISS** is a production-grade, cross-platform security audit and remediation platform built for endpoints, servers, and Active Directory environments. It provides **66 runnable audit scripts** (33 Windows PowerShell + 33 Linux Bash), a Python orchestrator, REST API server, SQLite scan history with drift detection, multi-format reporting (HTML, JSON, CSV, plain-text), and a Tkinter GUI — all following a unified interface.
 
 ### Design Principles
 
@@ -63,11 +64,60 @@
 
 ---
 
+## Business Value
+
+CyberSWISS directly addresses the business risk that undetected security gaps create: regulatory fines, breach costs, downtime, and reputational damage. The table below maps each capability to a concrete business outcome.
+
+### ROI at a Glance
+
+| Business Outcome | How CyberSWISS Delivers It |
+|---|---|
+| **Reduce breach risk** | 66 automated checks cover the attack surface continuously — not just once a year during a pen test |
+| **Cut audit preparation time** | One command produces SOC 2, HIPAA, and GDPR evidence reports in minutes instead of weeks of manual evidence collection |
+| **Avoid regulatory fines** | Built-in compliance mapping (L22/W22) identifies control gaps before auditors do — giving teams time to remediate |
+| **Contain remediation costs** | `--fix` mode auto-remediates low-risk findings (misconfigurations, insecure defaults) in the same run, reducing ticket backlogs |
+| **Protect revenue-critical systems** | Credential theft hardening (L31/W31), PrivEsc posture (L29/W29), and IR readiness (L33/W33) protect the systems that generate revenue |
+| **Accelerate secure software delivery** | SAST, SCA, IaC, and API security checks (L18–L20, L24–L26 / W19–W21, W24–W26) integrate directly into CI/CD pipelines |
+| **Demonstrate security posture to clients** | HTML and JSON reports provide board-ready summaries and client-facing evidence of diligence |
+| **Reduce dependency on external consultants** | Self-service GUI and CLI mean internal teams can run enterprise-grade audits without specialist contractors |
+| **Enable continuous security improvement** | Drift detection (`--diff`) surfaces new risks between scans, turning security from a point-in-time snapshot into an ongoing programme |
+
+---
+
+### Cost of Inaction vs CyberSWISS
+
+| Risk Area | Typical Cost of a Gap | CyberSWISS Check |
+|---|---|---|
+| Unpatched CVEs | Average breach cost $4.45M (IBM 2023) | L21 / W21 – Vulnerability Scanning |
+| Exposed secrets / credentials | Majority of cloud breaches start with leaked keys | L16 / W17 – Secrets Scanning |
+| Misconfigured firewall / open ports | Direct perimeter breach vector | L06, L05 / W06, W05 – Firewall & Listeners |
+| Weak password policy | Credential stuffing and brute-force entry | L01 / W01 – Password Policy |
+| Unencrypted disks | GDPR fines up to €20M or 4% global revenue | L11 / W11 – LUKS / BitLocker |
+| Missing audit logs | Forensic blindness during incident response | L08, L09 / W08, W09 – Logging & Auditing |
+| SOC 2 / HIPAA / GDPR gap | Audit failure, contract loss, regulatory action | L22 / W22 – Compliance Automation |
+| Insecure third-party code | Supply-chain attack (e.g. Log4Shell) | L20 / W21 – SCA & License Compliance |
+| No incident response plan | Extended MTTR, uncontrolled breach spread | L33 / W33 – IR Readiness |
+
+---
+
+### Who Benefits
+
+| Stakeholder | Value Delivered |
+|---|---|
+| **CISO / Security Team** | Continuous, evidence-backed posture visibility across all endpoints and servers |
+| **Compliance & Risk Officers** | Automated SOC 2 / HIPAA / GDPR control evidence with one command — no manual spreadsheets |
+| **DevSecOps / Platform Engineering** | CI/CD-gate integration blocks regressions before they reach production |
+| **IT Operations** | Self-service remediation of common misconfigurations reduces escalation to security specialists |
+| **Finance / Board** | Quantified risk reduction in plain language; defensible due-diligence record for insurers and partners |
+| **External Auditors & Pen Testers** | Structured JSON output and timestamped scan history accelerates evidence review |
+
+---
+
 ## Key Features
 
 | Feature | Details |
 |---|---|
-| **56 modular scripts** | Each security domain is its own script — run any subset with `--scripts L07 L21 W16` |
+| **66 modular scripts** | Each security domain is its own script — run any subset with `--scripts L07 L21 W16` |
 | **Opt-in remediation** | `--fix` / `-Fix` applies fixes only when explicitly requested; destructive operations include a 10-second abort window |
 | **Multi-format output** | JSON, HTML, CSV, or plain-text — all generated in one pass |
 | **Scan history & drift detection** | SQLite backend with `--save-db` + `--diff` for regression tracking |
@@ -94,7 +144,7 @@
 
 ```
 CyberSWISS/
-├── windows/                        # 28 PowerShell audit scripts (W01–W28)
+├── windows/                        # 33 PowerShell audit scripts (W01–W33)
 │   ├── W01_password_policy.ps1
 │   ├── W02_local_admin_review.ps1
 │   ├── ...
@@ -104,9 +154,14 @@ CyberSWISS/
 │   ├── W25_sqli_scanner.ps1
 │   ├── W26_sast_sca_scanner.ps1
 │   ├── W27_dns_resolution_security.ps1
-│   └── W28_backup_recovery_resilience.ps1
+│   ├── W28_backup_recovery_resilience.ps1
+│   ├── W29_privesc_posture.ps1
+│   ├── W30_deep_persistence.ps1
+│   ├── W31_credential_theft_hardening.ps1
+│   ├── W32_usb_media_control.ps1
+│   └── W33_ir_readiness.ps1
 │
-├── linux/                          # 28 Bash audit scripts (L01–L28)
+├── linux/                          # 33 Bash audit scripts (L01–L33)
 │   ├── L01_password_policy.sh
 │   ├── L02_sudo_users_review.sh
 │   ├── ...
@@ -116,7 +171,12 @@ CyberSWISS/
 │   ├── L25_sqli_scanner.sh
 │   ├── L26_sast_sca_scanner.sh
 │   ├── L27_dns_resolution_security.sh
-│   └── L28_backup_recovery_resilience.sh
+│   ├── L28_backup_recovery_resilience.sh
+│   ├── L29_privesc_posture.sh
+│   ├── L30_deep_persistence.sh
+│   ├── L31_credential_theft_hardening.sh
+│   ├── L32_usb_media_control.sh
+│   └── L33_ir_readiness.sh
 │
 ├── common/                         # Python orchestrator & utilities
 │   ├── runner.py                   # CLI orchestrator — main entry point
@@ -384,7 +444,7 @@ curl -s http://127.0.0.1:8080/api/v1/history | python3 -m json.tool
 
 ## Script Catalog
 
-### Windows PowerShell Scripts (28)
+### Windows PowerShell Scripts (33)
 
 | ID  | Script | Category | Severity | Fix Support |
 |-----|--------|----------|----------|-------------|
@@ -416,10 +476,15 @@ curl -s http://127.0.0.1:8080/api/v1/history | python3 -m json.tool
 | W26 | SAST / SCA Scanner | DevSecOps | High | Read-only |
 | W27 | DNS Resolution Security | Network Exposure | Medium | Read-only |
 | W28 | Backup & Recovery Resilience | Resilience & Recovery | High | Read-only |
+| W29 | Privilege Escalation Posture | PrivEsc Prevention | Critical | Disables AlwaysInstallElevated, enforces UAC |
+| W30 | Deep Persistence Detection | Persistence Mechanisms | Critical | Disables LoadAppInit_DLLs |
+| W31 | Credential Theft Hardening | Credential Protection | Critical | Disables WDigest, enforces NTLMv2, reduces cached logons |
+| W32 | USB & Removable Media Control | Endpoint Controls | High | Disables AutoRun |
+| W33 | Incident Response Readiness | Detection & Response | High | Enables PS ScriptBlock Logging, starts W32Time |
 
 ---
 
-### Linux Bash Scripts (28)
+### Linux Bash Scripts (33)
 
 | ID  | Script | Category | Severity | Fix Support |
 |-----|--------|----------|----------|-------------|
@@ -451,6 +516,11 @@ curl -s http://127.0.0.1:8080/api/v1/history | python3 -m json.tool
 | L26 | SAST / SCA Scanner | DevSecOps | High | Read-only |
 | L27 | DNS Resolution Security | Network Exposure | Medium | Read-only |
 | L28 | Backup & Recovery Resilience | Resilience & Recovery | High | Read-only |
+| L29 | Privilege Escalation Posture | PrivEsc Prevention | Critical | Removes other-write from writable systemd units |
+| L30 | Deep Persistence Detection | Persistence Mechanisms | Critical | Read-only |
+| L31 | Credential Theft Hardening | Credential Protection | Critical | Sets ptrace_scope=1, disables core dumps |
+| L32 | USB & Removable Media Control | Endpoint Controls | High | Blacklists usb_storage module |
+| L33 | Incident Response Readiness | Detection & Response | High | Enables systemd-timesyncd |
 
 ---
 

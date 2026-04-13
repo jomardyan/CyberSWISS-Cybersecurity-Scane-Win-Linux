@@ -86,15 +86,15 @@ class TestDiscoverScripts:
 
     def test_30_or_more_scripts_total(self):
         scripts = discover_scripts()
-        assert len(scripts) >= 30, f"Expected >= 30 scripts, got {len(scripts)}"
+        assert len(scripts) >= 60, f"Expected >= 60 scripts, got {len(scripts)}"
 
     def test_at_least_15_linux_scripts(self):
         linux_scripts = discover_scripts(os_filter="linux")
-        assert len(linux_scripts) >= 15, f"Expected >= 15 linux scripts, got {len(linux_scripts)}"
+        assert len(linux_scripts) >= 30, f"Expected >= 30 linux scripts, got {len(linux_scripts)}"
 
     def test_at_least_15_windows_scripts(self):
         win_scripts = discover_scripts(os_filter="windows")
-        assert len(win_scripts) >= 15, f"Expected >= 15 windows scripts, got {len(win_scripts)}"
+        assert len(win_scripts) >= 30, f"Expected >= 30 windows scripts, got {len(win_scripts)}"
 
     def test_script_ids_are_unique(self):
         scripts = discover_scripts()
@@ -332,18 +332,30 @@ class TestScriptMetadata:
                 f"{script_path.name}: FIX_MODE not initialised to false (not read-only by default)"
 
     def test_new_linux_scripts_exist(self):
-        """Verify new extended security Linux scripts (L16-L28) are present."""
+        """Verify new extended security Linux scripts (L16-L33) are present."""
         for script_id in ("L16", "L17", "L18", "L19", "L20", "L21", "L22", "L23",
-                          "L24", "L25", "L26", "L27", "L28"):
+                          "L24", "L25", "L26", "L27", "L28", "L29", "L30", "L31",
+                          "L32", "L33"):
             matches = list((REPO_ROOT / "linux").glob(f"{script_id}_*.sh"))
             assert len(matches) == 1, f"Expected exactly one script for {script_id}, found: {matches}"
 
     def test_new_windows_scripts_exist(self):
-        """Verify new extended security Windows scripts (W16-W28) are present."""
+        """Verify new extended security Windows scripts (W16-W33) are present."""
         for script_id in ("W16", "W17", "W18", "W19", "W20", "W21", "W22", "W23",
-                          "W24", "W25", "W26", "W27", "W28"):
+                          "W24", "W25", "W26", "W27", "W28", "W29", "W30", "W31",
+                          "W32", "W33"):
             matches = list((REPO_ROOT / "windows").glob(f"{script_id}_*.ps1"))
             assert len(matches) == 1, f"Expected exactly one script for {script_id}, found: {matches}"
+
+    def test_new_scripts_have_category_headers(self):
+        """Verify all new scripts (L29-L33, W29-W33) have parseable Category headers."""
+        from utils import discover_scripts
+        scripts = discover_scripts()
+        new_ids = {"L29", "L30", "L31", "L32", "L33", "W29", "W30", "W31", "W32", "W33"}
+        for s in scripts:
+            if s["id"] in new_ids:
+                assert s.get("category"), \
+                    f"{s['id']} ({s['name']}) has no Category header parseable by utils"
 
     def test_windows_scripts_have_synopsis(self):
         """Verify all PowerShell scripts have .SYNOPSIS documentation block."""
@@ -375,7 +387,7 @@ class TestRunnerModule:
         )
         scripts = runner.select_scripts(args)
         assert all(s["os"] == "linux" for s in scripts)
-        assert len(scripts) >= 15
+        assert len(scripts) >= 30
 
     def test_runner_dry_run(self, capsys):
         """Dry-run mode should list scripts without executing any of them."""
