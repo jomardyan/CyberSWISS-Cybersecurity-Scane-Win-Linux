@@ -88,6 +88,7 @@ def discover_scripts(os_filter: str | None = None) -> list[dict[str, Any]]:
                 script_id = script_path.stem.split("_")[0]  # e.g. W01, L07
                 name = script_path.stem  # e.g. W01_password_policy
                 lang = "PowerShell" if script_path.suffix == ".ps1" else "Bash"
+                category = _extract_script_category(script_path)
                 scripts.append(
                     {
                         "id": script_id,
@@ -96,10 +97,38 @@ def discover_scripts(os_filter: str | None = None) -> list[dict[str, Any]]:
                         "os": os_name,
                         "lang": lang,
                         "admin_required": True,  # conservative default
+                        "category": category,
                     }
                 )
 
     return scripts
+
+
+def _extract_script_category(script_path: Path) -> str:
+    """
+    Extract the ``Category`` value from the header comment block of a script.
+
+    Looks for a line matching::
+
+        # Category : <value>          (Bash)
+        # Category : <value>          (PowerShell)
+
+    Returns an empty string when no such line is found within the first
+    50 lines (to avoid reading large files unnecessarily).
+    """
+    try:
+        with open(script_path, encoding="utf-8", errors="ignore") as fh:
+            for i, line in enumerate(fh):
+                if i >= 50:
+                    break
+                stripped = line.strip().lstrip("#").strip()
+                if stripped.lower().startswith("category"):
+                    parts = stripped.split(":", 1)
+                    if len(parts) == 2:
+                        return parts[1].strip()
+    except OSError:
+        pass
+    return ""
 
 
 # ── Finding Helpers ────────────────────────────────────────────────────────────

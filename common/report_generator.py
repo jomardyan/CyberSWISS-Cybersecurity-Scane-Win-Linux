@@ -107,7 +107,6 @@ def generate_html(consolidated: dict) -> str:
     warns = sum(1 for f in all_findings if f.get("status") == "WARN")
     passes = sum(1 for f in all_findings if f.get("status") == "PASS")
     infos = sum(1 for f in all_findings if f.get("status") == "INFO")
-    _ = infos  # reserved for future use in HTML template
     scripts_run = consolidated.get("scripts_run", len(consolidated.get("results", [])))
 
     parts: list[str] = [_HTML_HEAD.format(host=escape_html(host), timestamp=escape_html(ts))]
@@ -118,7 +117,8 @@ def generate_html(consolidated: dict) -> str:
     parts.append(f'<div class="stat-card"><div class="num fail-num">{fails}</div><div>FAIL</div></div>')
     parts.append(f'<div class="stat-card"><div class="num warn-num">{warns}</div><div>WARN</div></div>')
     parts.append(f'<div class="stat-card"><div class="num pass-num">{passes}</div><div>PASS</div></div>')
-    parts.append(f'<div class="stat-card"><div class="num info-num">{total}</div><div>Total Findings</div></div>')
+    parts.append(f'<div class="stat-card"><div class="num info-num">{infos}</div><div>INFO</div></div>')
+    parts.append(f'<div class="stat-card"><div class="num">{total}</div><div>Total Findings</div></div>')
     parts.append("</div>")
 
     # Per-script summary

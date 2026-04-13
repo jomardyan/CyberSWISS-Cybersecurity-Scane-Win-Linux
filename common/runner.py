@@ -177,6 +177,18 @@ def parse_args() -> argparse.Namespace:
         help="Seconds to wait between script executions (rate limiting / evasion). Default: 0.",
     )
     parser.add_argument(
+        "--tags",
+        nargs="+",
+        metavar="TAG",
+        default=None,
+        help="Run only scripts whose category matches one of the given tags (case-insensitive, e.g. 'network' 'logging').",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print additional detail per script (stderr output, raw exit code).",
+    )
+    parser.add_argument(
         "--save-db",
         action="store_true",
         help="Save scan results to the SQLite scan history database.",
@@ -216,6 +228,13 @@ def select_scripts(args: argparse.Namespace) -> list[dict]:
         upper_ids = {s.upper() for s in args.scripts}
         all_scripts = [s for s in all_scripts if s["id"].upper() in upper_ids]
 
+    if getattr(args, "tags", None):
+        lower_tags = {t.lower() for t in args.tags}
+        all_scripts = [
+            s for s in all_scripts
+            if any(t in s.get("category", "").lower() for t in lower_tags)
+        ]
+
     return all_scripts
 
 
@@ -245,6 +264,7 @@ def print_script_result(
     min_severity: str | None,
     status_filter: list[str] | None,
     no_colour: bool,
+    verbose: bool = False,
 ) -> tuple[int, int, int]:
     """Print findings for one script result. Returns (total, fails, warns)."""
     script_name = result.get("script", "unknown")
@@ -256,6 +276,8 @@ def print_script_result(
     if result.get("error"):
         err_line = f"\n[ERROR] {script_name}: {result['error']}"
         print(coloured(err_line, "FAIL") if not no_colour else err_line)
+        if verbose and result.get("stderr"):
+            print(f"       Stderr : {result['stderr']}")
         return 0, 0, 0
 
     # Apply filters
@@ -496,6 +518,7 @@ def main() -> int:
                 min_severity=args.min_severity,
                 status_filter=args.status,
                 no_colour=args.no_colour,
+                verbose=args.verbose,
             )
 
         print("\n" + "═" * 60)

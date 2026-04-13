@@ -12,9 +12,6 @@
 #
 # See docs/RUNTIME_REQUIREMENTS.md for the full platform dependency list.
 
-# Core (always required)
-colorama>=0.4.6
-
 # Optional: GUI
 # tkinter is part of the Python standard library on most systems
 

@@ -1,16 +1,80 @@
+# Python
 __pycache__/
-.pytest_cache/
 *.py[cod]
 *.pyo
-.env
-.venv
-venv/
+*.pyd
+*.egg
 *.egg-info/
 dist/
 build/
+wheels/
+.installed.cfg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Testing & coverage
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+htmlcov/
+nosetests.xml
+.hypothesis/
+
+# Reports (generated output)
+reports/*.csv
 reports/*.json
 reports/*.html
+reports/*.pdf
 reports/*.txt
+
+# Logs
 *.log
+logs/
+
+# OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+
+# Secrets / credentials (never commit)
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+.secrets
+secrets.yml
+secrets.yaml
+secrets.json
+.env.*
+!.env.example
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
