@@ -266,30 +266,36 @@ install-all: install
 # =============================================================================
 scan: check-python check-runner
 	$(call _info,"Running all scripts for current OS…")
-	$(PYTHON) $(RUNNER) $(_VERBOSE)
+	-$(PYTHON) $(RUNNER) $(_VERBOSE)
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 scan-linux: check-python check-runner
 	$(call _info,"Running Linux audit scripts…")
-	$(PYTHON) $(RUNNER) --os linux $(_VERBOSE)
+	-$(PYTHON) $(RUNNER) --os linux $(_VERBOSE)
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 scan-windows: check-python check-runner
 	$(call _info,"Running Windows audit scripts…")
-	$(PYTHON) $(RUNNER) --os windows $(_VERBOSE)
+	-$(PYTHON) $(RUNNER) --os windows $(_VERBOSE)
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 scan-high: check-python check-runner
 	$(call _info,"Running scripts with severity >= High…")
-	$(PYTHON) $(RUNNER) --min-severity High $(_VERBOSE)
+	-$(PYTHON) $(RUNNER) --min-severity High $(_VERBOSE)
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 scan-critical: check-python check-runner
 	$(call _info,"Running scripts with severity = Critical…")
-	$(PYTHON) $(RUNNER) --min-severity Critical $(_VERBOSE)
+	-$(PYTHON) $(RUNNER) --min-severity Critical $(_VERBOSE)
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 scan-sev: check-python check-runner
 	@test -n "$(MIN_SEV)" || { \
 	    printf '$(RED)[✘] MIN_SEV is not set. Example: make scan-sev MIN_SEV=High$(RST)\n' >&2; exit 1; \
 	}
 	$(call _info,"Running scripts with severity >= $(MIN_SEV)…")
-	$(PYTHON) $(RUNNER) --min-severity $(MIN_SEV) $(_VERBOSE)
+	-$(PYTHON) $(RUNNER) --min-severity $(MIN_SEV) $(_VERBOSE)
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 scan-dry: check-python check-runner
 	$(call _info,"Dry-run – listing scripts that would execute…")
@@ -298,7 +304,8 @@ scan-dry: check-python check-runner
 scan-fix: check-python check-runner
 	$(call _warn,"Running with auto-remediation (--fix). This may modify system configuration.")
 	@printf 'Press Ctrl-C within 5 seconds to abort… '; sleep 5 || exit 0; echo ''
-	$(PYTHON) $(RUNNER) --fix $(_VERBOSE)
+	$(PYTHON) $(RUNNER) --fix $(_VERBOSE); true
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 scan-id: check-python check-runner
 	@test -n "$(SCRIPTS)" || { \
@@ -306,7 +313,8 @@ scan-id: check-python check-runner
 	    exit 1; \
 	}
 	$(call _info,"Running scripts: $(SCRIPTS)")
-	$(PYTHON) $(RUNNER) --scripts $(SCRIPTS) $(_VERBOSE)
+	-$(PYTHON) $(RUNNER) --scripts $(SCRIPTS) $(_VERBOSE)
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 scan-tag: check-python check-runner
 	@test -n "$(TAG)" || { \
@@ -314,11 +322,13 @@ scan-tag: check-python check-runner
 	    exit 1; \
 	}
 	$(call _info,"Running scripts with tag: $(TAG)")
-	$(PYTHON) $(RUNNER) --tags $(TAG) $(_VERBOSE)
+	-$(PYTHON) $(RUNNER) --tags $(TAG) $(_VERBOSE)
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 scan-delay: check-python check-runner
 	$(call _info,"Rate-limited scan (delay=$(DELAY)s between scripts)…")
-	$(PYTHON) $(RUNNER) --delay $(DELAY) $(_VERBOSE)
+	-$(PYTHON) $(RUNNER) --delay $(DELAY) $(_VERBOSE)
+	@printf '$(CYN)[*]$(RST) Exit code reflects audit findings (0=clean, 1=warnings, 2=failures).\n'
 
 # =============================================================================
 # [USER] REPORTING
@@ -326,11 +336,11 @@ scan-delay: check-python check-runner
 report: check-python check-runner
 	@mkdir -p $(REPORT_DIR)
 	$(call _info,"Generating full report…")
-	$(PYTHON) $(RUNNER) $(_VERBOSE) \
+	-$(PYTHON) $(RUNNER) $(_VERBOSE) \
 	    --output  $(REPORT_BASE).json \
 	    --csv     $(REPORT_BASE).csv \
-	    --html    $(REPORT_BASE).html \
-	    || { printf '$(RED)[✘] Report generation failed.$(RST)\n' >&2; exit 1; }
+	    --html    $(REPORT_BASE).html
+	@test -f "$(REPORT_BASE).json" || { printf '$(RED)[✘] Report generation failed – no output file written.$(RST)\n' >&2; exit 1; }
 	$(call _ok,"Reports written:")
 	@printf '  $(CYN)→$(RST) $(REPORT_BASE).json\n'
 	@printf '  $(CYN)→$(RST) $(REPORT_BASE).csv\n'
@@ -339,12 +349,12 @@ report: check-python check-runner
 report-db: check-python check-runner
 	@mkdir -p $(REPORT_DIR)
 	$(call _info,"Generating report + saving to DB (with drift)…")
-	$(PYTHON) $(RUNNER) $(_VERBOSE) \
+	-$(PYTHON) $(RUNNER) $(_VERBOSE) \
 	    --output  $(REPORT_BASE).json \
 	    --csv     $(REPORT_BASE).csv \
 	    --html    $(REPORT_BASE).html \
-	    --save-db --diff \
-	    || { printf '$(RED)[✘] Report + DB save failed.$(RST)\n' >&2; exit 1; }
+	    --save-db --diff
+	@test -f "$(REPORT_BASE).json" || { printf '$(RED)[✘] Report + DB save failed – no output file written.$(RST)\n' >&2; exit 1; }
 	$(call _ok,"DB report complete: $(REPORT_BASE).json")
 
 report-diff: check-python check-runner

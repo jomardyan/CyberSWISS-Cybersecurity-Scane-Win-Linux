@@ -36,9 +36,11 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import itertools
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -238,11 +240,62 @@ def select_scripts(args: argparse.Namespace) -> list[dict]:
     return all_scripts
 
 
+# ── Terminal width helper ─────────────────────────────────────────────────────
+def _term_width() -> int:
+    try:
+        import shutil
+        return max(80, shutil.get_terminal_size((120, 40)).columns)
+    except Exception:  # pylint: disable=broad-except
+        return 120
+
+
+# ── Colour / badge helpers ─────────────────────────────────────────────────────
+_STATUS_STYLE: dict[str, str] = {
+    "FAIL": "\033[1;31m",   # bold red
+    "WARN": "\033[1;33m",   # bold yellow
+    "PASS": "\033[0;32m",   # green
+    "INFO": "\033[0;36m",   # cyan
+}
+_SEV_STYLE: dict[str, str] = {
+    "Critical": "\033[1;35m",  # bold magenta
+    "High":     "\033[1;31m",  # bold red
+    "Med":      "\033[0;33m",  # yellow
+    "Low":      "\033[0;32m",  # green
+    "Info":     "\033[0;36m",  # cyan
+}
+_RESET = "\033[0m"
+_DIM   = "\033[2m"
+_BOLD  = "\033[1m"
+
+
+def _c(text: str, code: str, no_colour: bool) -> str:
+    """Wrap text in an ANSI code, or return plain text when colour is off."""
+    return text if no_colour else f"{code}{text}{_RESET}"
+
+
+def _badge(label: str, code: str, width: int, no_colour: bool) -> str:
+    """Fixed-width padded badge."""
+    padded = label.center(width)
+    return _c(padded, code, no_colour)
+
+
+def _truncate(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
+
+
+# ── Per-script table printer ───────────────────────────────────────────────────
+_STATUS_ORDER = {"FAIL": 0, "WARN": 1, "INFO": 2, "PASS": 3}
+_STATUS_ICON  = {"FAIL": "✗", "WARN": "⚠", "PASS": "✓", "INFO": "ℹ"}
+
+
 def print_finding(finding: dict, no_colour: bool = False) -> None:
+    """Legacy single-finding printer (used outside the table path)."""
     status = finding.get("status", "?")
-    sev = finding.get("severity", "?")
-    fid = finding.get("id", "?")
-    name = finding.get("name", "?")
+    sev    = finding.get("severity", "?")
+    fid    = finding.get("id", "?")
+    name   = finding.get("name", "?")
     detail = finding.get("detail", "")
     remedy = finding.get("remediation", "")
 
@@ -257,6 +310,119 @@ def print_finding(finding: dict, no_colour: bool = False) -> None:
         if not no_colour:
             rem_line = f"\033[0;36m{rem_line}\033[0m"
         print(rem_line)
+
+
+def _print_findings_table(
+    script_name: str,
+    host: str,
+    findings: list[dict],
+    min_severity: str | None,
+    status_filter: list[str] | None,
+    no_colour: bool,
+    verbose: bool,
+) -> tuple[int, int, int]:
+    """
+    Print one script's findings as a compact aligned table.
+    Returns (total, fails, warns).
+    """
+    W = _term_width()
+
+    total = len(findings)
+    fails = sum(1 for f in findings if f.get("status") == "FAIL")
+    warns = sum(1 for f in findings if f.get("status") == "WARN")
+
+    # Apply display filters
+    filtered = filter_findings(findings, min_severity=min_severity, status_filter=status_filter)
+    # Sort: FAIL first, then WARN, INFO, PASS; then by severity desc
+    filtered.sort(key=lambda f: (
+        _STATUS_ORDER.get(f.get("status", "?"), 9),
+        -SEVERITY_ORDER.get(f.get("severity", ""), 0),
+    ))
+
+    pass_count = sum(1 for f in findings if f.get("status") == "PASS")
+    actionable = [f for f in filtered if f.get("status") not in ("PASS",)]
+
+    # Script header line
+    icon_txt = ""
+    if fails:
+        icon_txt = _c("✗ FAIL", _STATUS_STYLE["FAIL"], no_colour)
+    elif warns:
+        icon_txt = _c("⚠ WARN", _STATUS_STYLE["WARN"], no_colour)
+    else:
+        icon_txt = _c("✓ PASS", _STATUS_STYLE["PASS"], no_colour)
+
+    header_label = f" {script_name}"
+    passes_txt   = _c(f"{pass_count} ✓", _STATUS_STYLE["PASS"], no_colour) if pass_count else ""
+    fails_txt    = _c(f"{fails} ✗", _STATUS_STYLE["FAIL"], no_colour)    if fails else ""
+    warns_txt    = _c(f"{warns} ⚠", _STATUS_STYLE["WARN"], no_colour)    if warns else ""
+    counts       = "  ".join(x for x in [fails_txt, warns_txt, passes_txt] if x)
+
+    sep = _c("─" * W, _DIM, no_colour)
+    print(f"\n{sep}")
+    script_line = f"{_c('│', _DIM, no_colour)} {icon_txt}  {_BOLD if not no_colour else ''}{header_label}{_RESET if not no_colour else ''}  {_c(f'({host})', _DIM, no_colour)}  {counts}"
+    print(script_line)
+
+    if not actionable:
+        return total, fails, warns
+
+    # Column widths  (ID | Status | Sev | Name | Detail)
+    id_w   = min(12, max((len(f.get("id","")) for f in actionable), default=4))
+    st_w   = 4
+    sv_w   = 8
+    name_w = 28
+    # Remaining space for detail (leave 5 for separators)
+    detail_w = max(20, W - id_w - st_w - sv_w - name_w - 10)
+
+    # Table header
+    def _col(t: str, w: int) -> str:
+        return t.ljust(w)[:w]
+
+    bar = _c("│", _DIM, no_colour)
+    hdr = (
+        f"  {_c(_col('ID',     id_w),   _DIM, no_colour)}  "
+        f"{_c(_col('ST',    st_w),   _DIM, no_colour)}  "
+        f"{_c(_col('SEV',   sv_w),   _DIM, no_colour)}  "
+        f"{_c(_col('Finding Name', name_w), _DIM, no_colour)}  "
+        f"{_c('Detail / Remediation', _DIM, no_colour)}"
+    )
+    print(hdr)
+    print(_c("  " + "─" * (W - 2), _DIM, no_colour))
+
+    for f in actionable:
+        status  = f.get("status", "?")
+        sev     = f.get("severity", "?")
+        fid     = f.get("id", "")
+        name    = f.get("name", "")
+        detail  = f.get("detail", "")
+        remedy  = f.get("remediation", "")
+
+        st_code  = _STATUS_STYLE.get(status, "")
+        sv_code  = _SEV_STYLE.get(sev, "")
+        icon     = _STATUS_ICON.get(status, "?")
+
+        # Primary row
+        detail_text = _truncate(detail, detail_w) if detail else ""
+        row = (
+            f"  {_c(_col(fid, id_w), st_code, no_colour)}  "
+            f"{_c(f'{icon} {_col(status, st_w-2)}', st_code, no_colour)}  "
+            f"{_c(_col(sev, sv_w), sv_code, no_colour)}  "
+            f"{_col(_truncate(name, name_w), name_w)}  "
+            f"{_c(detail_text, _DIM, no_colour)}"
+        )
+        print(row)
+
+        # Remedy row (indented, only for FAIL/WARN)
+        if remedy and status in ("FAIL", "WARN"):
+            remedy_prefix = "    ↳ Remedy: "
+            avail = W - len(remedy_prefix) - 2
+            remedy_text = _truncate(remedy, avail)
+            print(_c(f"{remedy_prefix}{remedy_text}", "\033[0;36m", no_colour))
+
+        if verbose and f.get("detail") and detail_text != detail:
+            # Full detail on overflow
+            print(_c(f"    ↳ Full detail: {detail}", _DIM, no_colour))
+
+    return total, fails, warns
 
 
 def print_script_result(
@@ -274,40 +440,31 @@ def print_script_result(
     findings = result.get("findings", [])
 
     if result.get("error"):
-        err_line = f"\n[ERROR] {script_name}: {result['error']}"
-        print(coloured(err_line, "FAIL") if not no_colour else err_line)
+        W = _term_width()
+        print(_c(f"\n{'─' * W}", _DIM, no_colour))
+        print(_c(f"  ✗ ERROR  {script_name}: {result['error']}", _STATUS_STYLE['FAIL'], no_colour))
         if verbose and result.get("stderr"):
-            print(f"       Stderr : {result['stderr']}")
+            print(_c(f"    stderr: {result['stderr']}", _DIM, no_colour))
         return 0, 0, 0
 
-    # Apply filters
-    filtered = filter_findings(
-        findings,
-        min_severity=min_severity,
-        status_filter=status_filter,
+    total, fails, warns = _print_findings_table(
+        script_name, host, findings,
+        min_severity, status_filter, no_colour, verbose
     )
-
-    if filtered:
-        hdr = f"\n── {script_name} ({host}) {'─' * max(0, 50 - len(script_name) - len(host))}"
-        print(hdr)
-        for f in filtered:
-            print_finding(f, no_colour=no_colour)
 
     fix_report = result.get("fix_report")
     if isinstance(fix_report, dict):
         if fix_report.get("verification_error"):
-            print(f"       Fix verification failed: {fix_report['verification_error']}")
+            print(_c(f"    ⚠ Fix verification failed: {fix_report['verification_error']}", _STATUS_STYLE['WARN'], no_colour))
         else:
             print(
-                "       Fix verification: "
-                f"fixed {fix_report.get('fixed_count', 0)}, "
-                f"remaining {fix_report.get('remaining_count', 0)}, "
-                f"new issues {fix_report.get('new_issue_count', 0)}"
+                _c(
+                    f"    ↳ Fix: fixed {fix_report.get('fixed_count', 0)}  "
+                    f"remaining {fix_report.get('remaining_count', 0)}  "
+                    f"new issues {fix_report.get('new_issue_count', 0)}",
+                    "\033[0;36m", no_colour,
+                )
             )
-
-    total = len(findings)
-    fails = sum(1 for f in findings if f.get("status") == "FAIL")
-    warns = sum(1 for f in findings if f.get("status") == "WARN")
     return total, fails, warns
 
 
@@ -402,6 +559,74 @@ def _summarize_fix_outcome(
     }
 
 
+# ── Spinner ────────────────────────────────────────────────────────────────────
+_SPINNER_FRAMES = ["⠋", "⠙", "⠸", "⠴", "⠦", "⠇"]
+_SPINNER_INTERVAL = 0.1  # seconds between frames
+
+
+def _run_with_spinner(s: dict, timeout: int, fix_mode: bool, no_colour: bool) -> dict:
+    """
+    Run a single audit script while displaying an animated spinner on stdout.
+
+    The spinner line is overwritten in-place and replaced with a tick/cross
+    summary once the script finishes.
+    """
+    is_tty = sys.stdout.isatty()
+    label = f"  → {s['id']:6s}  {s['name']}"
+    done_event = threading.Event()
+    result_holder: list[dict] = []
+    exc_holder:    list[BaseException] = []
+
+    def _worker() -> None:
+        try:
+            result_holder.append(
+                run_script(s["path"], json_mode=True, timeout=timeout, fix_mode=fix_mode)
+            )
+        except BaseException as exc:  # pylint: disable=broad-except
+            exc_holder.append(exc)
+        finally:
+            done_event.set()
+
+    worker = threading.Thread(target=_worker, daemon=True)
+    worker.start()
+
+    if is_tty and not no_colour:
+        spinner = itertools.cycle(_SPINNER_FRAMES)
+        while not done_event.is_set():
+            frame = next(spinner)
+            sys.stdout.write(f"\r\033[0;36m{frame}\033[0m {label} ")
+            sys.stdout.flush()
+            done_event.wait(_SPINNER_INTERVAL)
+
+        worker.join()
+
+        if exc_holder:
+            raise exc_holder[0]
+
+        # Clear the spinner line and print final status
+        result = result_holder[0]
+        findings = result.get("findings", [])
+        has_fail = any(f.get("status") == "FAIL" for f in findings)
+        has_warn = any(f.get("status") == "WARN" for f in findings)
+        has_err  = bool(result.get("error"))
+        if has_err or has_fail:
+            icon = "\033[0;31m✗\033[0m"
+        elif has_warn:
+            icon = "\033[0;33m⚠\033[0m"
+        else:
+            icon = "\033[0;32m✓\033[0m"
+        sys.stdout.write(f"\r{icon} {label}   \n")
+        sys.stdout.flush()
+    else:
+        # Non-TTY / --no-colour: plain static line, no spinner
+        print(f"  → {label.strip()} ...", flush=True)
+        worker.join()
+        if exc_holder:
+            raise exc_holder[0]
+
+    return result_holder[0]
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main() -> int:
     args = parse_args()
@@ -448,8 +673,9 @@ def main() -> int:
         if args.delay > 0 and args.parallel > 1 and index > 0:
             time.sleep(args.delay * index)
         if not args.json:
-            print(f"  → Running {s['id']:6s}  {s['name']} ...", flush=True)
-        result = run_script(s["path"], json_mode=True, timeout=args.timeout, fix_mode=args.fix)
+            result = _run_with_spinner(s, args.timeout, args.fix, args.no_colour)
+        else:
+            result = run_script(s["path"], json_mode=True, timeout=args.timeout, fix_mode=args.fix)
         if args.fix and not result.get("error"):
             audit_findings = list(result.get("findings", []))
             verification = run_script(s["path"], json_mode=True, timeout=args.timeout, fix_mode=False)
@@ -509,9 +735,7 @@ def main() -> int:
     if args.json:
         print(json.dumps(consolidated, indent=2, default=str))
     else:
-        print("\n" + "═" * 60)
-        print("  AUDIT RESULTS")
-        print("═" * 60)
+        # ── Per-script tables ──────────────────────────────────────────────────
         for result in all_results:
             print_script_result(
                 result,
@@ -521,9 +745,69 @@ def main() -> int:
                 verbose=args.verbose,
             )
 
-        print("\n" + "═" * 60)
-        print(f"  SUMMARY  |  Scripts: {len(all_results)}  |  Findings: {grand_total}  |  FAIL: {grand_fails}  |  WARN: {grand_warns}")
-        print("═" * 60)
+        # ── Summary dashboard ──────────────────────────────────────────────────
+        W = _term_width()
+        nc = args.no_colour
+        all_findings_flat = [
+            f for r in all_results for f in r.get("findings", [])
+        ]
+        count_crit = sum(1 for f in all_findings_flat if f.get("severity") == "Critical" and f.get("status") == "FAIL")
+        count_high = sum(1 for f in all_findings_flat if f.get("severity") == "High"     and f.get("status") == "FAIL")
+        count_med  = sum(1 for f in all_findings_flat if f.get("severity") == "Med"      and f.get("status") in ("FAIL", "WARN"))
+        count_warn = sum(1 for f in all_findings_flat if f.get("status") == "WARN")
+        count_pass = sum(1 for f in all_findings_flat if f.get("status") == "PASS")
+        count_info = sum(1 for f in all_findings_flat if f.get("status") == "INFO")
+
+        dbl = "═" * W
+        print(f"\n{_c(dbl, _DIM, nc)}")
+        title = "  AUDIT SUMMARY"
+        print(f"{_BOLD if not nc else ''}{title}{_RESET if not nc else ''}")
+        print(_c("─" * W, _DIM, nc))
+
+        # Stat cards row
+        card_w = 12
+        cards = [
+            ("Scripts",  str(len(all_results)),  "\033[1;37m"),
+            ("Findings", str(grand_total),        "\033[1;37m"),
+            ("FAIL",     str(grand_fails),         _STATUS_STYLE["FAIL"]),
+            ("WARN",     str(grand_warns),         _STATUS_STYLE["WARN"]),
+            ("PASS",     str(count_pass),          _STATUS_STYLE["PASS"]),
+            ("INFO",     str(count_info),          _STATUS_STYLE["INFO"]),
+        ]
+        row_nums   = ""
+        row_labels = ""
+        for label, value, code in cards:
+            row_nums   += _c(value.center(card_w), code, nc)
+            row_labels += _c(label.center(card_w), _DIM, nc)
+        print(f"  {row_nums}")
+        print(f"  {row_labels}")
+
+        # Severity breakdown bar (only when there are findings)
+        if grand_fails or grand_warns:
+            print(_c("─" * W, _DIM, nc))
+            sev_items = [
+                ("Critical", count_crit, "\033[1;35m"),
+                ("High",     count_high, "\033[1;31m"),
+                ("Warn",     count_warn, "\033[1;33m"),
+                ("Med",      count_med,  "\033[0;33m"),
+            ]
+            bar_parts = []
+            for sev_label, cnt, code in sev_items:
+                if cnt:
+                    bar_parts.append(_c(f"  {sev_label}: {cnt}", code, nc))
+            if bar_parts:
+                print("  " + "   ".join(bar_parts))
+
+        # Overall verdict
+        print(_c("─" * W, _DIM, nc))
+        if grand_fails:
+            verdict = _c("  ✗  AUDIT FAILED  — action required", _STATUS_STYLE["FAIL"], nc)
+        elif grand_warns:
+            verdict = _c("  ⚠  AUDIT PASSED WITH WARNINGS", _STATUS_STYLE["WARN"], nc)
+        else:
+            verdict = _c("  ✓  AUDIT PASSED  — no failures detected", _STATUS_STYLE["PASS"], nc)
+        print(f"{_BOLD if not nc else ''}{verdict}")
+        print(_c(dbl, _DIM, nc))
 
     # ── Save report ────────────────────────────────────────────────────────────
     if args.output or args.html or args.csv or args.text or args.save_db or args.diff:
