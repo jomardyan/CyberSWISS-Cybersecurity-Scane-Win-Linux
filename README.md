@@ -1,8 +1,6 @@
 # CyberSWISS – Enterprise Security Audit & Remediation Platform
 
-[![CI/CD Pipeline](https://img.shields.io/badge/CI%2FCD-passing-brightgreen)](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scane-Win-Linux/actions)
-[![Python Tests](https://img.shields.io/badge/Python%20Tests-passing-brightgreen)](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scane-Win-Linux/actions)
-[![Bash Lint](https://img.shields.io/badge/Bash%20Lint-passing-brightgreen)](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scane-Win-Linux/actions)
+[![CI](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/actions/workflows/ci.yml/badge.svg)](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![Bash 4.0+](https://img.shields.io/badge/Bash-4.0%2B-brightgreen)](https://www.gnu.org/software/bash/)
@@ -128,7 +126,8 @@ CyberSWISS directly addresses the business risk that undetected security gaps cr
 | **Baseline waivers** | `--baseline` suppresses formally accepted findings (with wildcards and expiry dates) so CI breaks only on *new* risk |
 | **Trend analytics** | `--trend N` shows whether the posture is improving or degrading across the last N stored scans |
 | **Scan history & drift detection** | SQLite backend with `--save-db` + `--diff` for regression tracking |
-| **REST API server** | 8 endpoints with async scan support, history management, HTML reports, and drift analysis |
+| **History tooling** | `common/db.py` lists, inspects, compares, and prunes stored scans — searchable by script ID, OS, or host tag |
+| **REST API server** | 9 endpoints with async scan support, history management, six report formats, drift, and trend analysis |
 | **Interactive GUI** | Tkinter-based point-and-click scanning; no CLI knowledge required |
 | **Parallel execution** | `--parallel N` runs N scripts concurrently for faster audit cycles |
 | **Rate-limiting / IDS evasion** | `--delay SEC` inserts configurable sleep between scripts |
@@ -241,12 +240,17 @@ CyberSWISS/
 
 ```bash
 # Clone the repository
-git clone https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scane-Win-Linux.git
-cd CyberSWISS-Cybersecurity-Scane-Win-Linux
+git clone https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux.git
+cd CyberSWISS-Cybersecurity-Scan-Win-Linux
 
-# Install Python packages
+# Install the development toolchain (pytest, flake8, pylint, black, isort)
 pip install -r requirements.txt
 ```
+
+> **CyberSWISS has no third-party Python runtime dependencies.** The
+> orchestrator, reporting, history database, REST API, and GUI are built
+> entirely on the standard library, so a bare Python install is enough to run
+> a scan. `requirements.txt` covers the development and test toolchain only.
 
 > **Tip:** A `Makefile` is included that wraps all common tasks — see [Make / Developer Workflow](#make--developer-workflow) for the short form of every command below.
 
@@ -522,19 +526,22 @@ make scan       PYTHON=python3.11         # override Python binary
 | `make lint` | flake8 + shellcheck + pylint (all in one) |
 | `make lint-python` | flake8 on `common/` and `tests/` |
 | `make lint-shell` | shellcheck on `linux/` scripts |
+| `make lint-pylint` | pylint on `common/` |
+| `make test-verbose` | Full suite with verbose output |
 | `make format` | Auto-format with black + isort |
 | `make format-check` | Dry-run format check (CI-safe) |
 | `make upgrade` | Upgrade all installed pip packages |
 | `make ci` | Full CI gate: check-env → lint → test → scan-dry |
 | `make ci-lint` | Lint step only |
 | `make ci-test` | Test step only |
+| `make ci-scan` | Dry-run scan step only |
 
 ### Typical workflows
 
 ```bash
 # First-time setup
-git clone https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scane-Win-Linux.git
-cd CyberSWISS-Cybersecurity-Scane-Win-Linux
+git clone https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux.git
+cd CyberSWISS-Cybersecurity-Scan-Win-Linux
 make install
 make check-env
 
@@ -556,8 +563,6 @@ make ci
 
 ---
 
----
-
 ## REST API Reference
 
 CyberSWISS exposes a built-in REST API (`common/api.py`) using Python's standard `http.server` — no extra dependencies required.
@@ -569,7 +574,7 @@ CyberSWISS exposes a built-in REST API (`common/api.py`) using Python's standard
 | `POST` | `/api/v1/scan` | Start an async background scan — body accepts `os`, `scripts`, `tags`, `min_severity`, `fix`, `timeout` |
 | `GET`  | `/api/v1/scan/{id}` | Poll scan status and retrieve results |
 | `GET`  | `/api/v1/history` | List past scans — `?limit=N&host=NAME&tag=L07` |
-| `GET`  | `/api/v1/report/{id}` | Report for a saved scan — `?format=html\|json\|sarif\|markdown\|csv\|text` (default `html`) |
+| `GET`  | `/api/v1/report/{id}` | Report for a saved scan — `?format=` one of `html`, `json`, `sarif`, `markdown`, `csv`, `text` (default `html`) |
 | `GET`  | `/api/v1/drift/{id}` | Drift analysis vs the previous scan |
 | `GET`  | `/api/v1/trend` | Posture trend across recent scans — `?limit=N&host=NAME` |
 | `DELETE` | `/api/v1/scan/{id}` | Delete a scan from history |
@@ -678,8 +683,6 @@ curl -s "http://127.0.0.1:8080/api/v1/trend?limit=10" | python3 -m json.tool
 
 ---
 
----
-
 ## Active Directory & GPO Integration
 
 `W16_ad_gpo_security.ps1` is fully compatible with AD-joined Windows endpoints and can be deployed as a **GPO Startup Script** or **Scheduled Task via GPO**.
@@ -702,8 +705,6 @@ curl -s "http://127.0.0.1:8080/api/v1/trend?limit=10" | python3 -m json.tool
 
 ---
 
----
-
 ## Drift Detection Detail
 
 ```
@@ -717,9 +718,7 @@ curl -s "http://127.0.0.1:8080/api/v1/trend?limit=10" | python3 -m json.tool
      [WARN→FAIL] [High] L21-C1: OS CVE count increased from 12 to 47
 ```
 
-Use `--diff` prints this summary inline and exits with code `2` if any new `FAIL` findings are detected — ideal for blocking CI/CD pipelines on regressions.
-
----
+`--diff` prints this summary inline and exits with code `2` when new `FAIL` findings are detected — ideal for blocking CI/CD pipelines on regressions. To review the stored history without re-scanning, combine it with `--dry-run` (`make report-diff`).
 
 ---
 
@@ -729,14 +728,41 @@ The included `.github/workflows/ci.yml` runs automatically on every push and pul
 
 | Job | What it validates | Tools |
 |-----|-------------------|-------|
-| `python-tests` | Linting and unit tests for `common/*.py` | `pylint` (7.0+ threshold), `pytest` with coverage (Python 3.11) |
-| `bash-lint` | Syntax and best-practices checks for all `linux/*.sh` scripts | `shellcheck` |
+| `python-tests` | Lint and unit tests for `common/` — flake8 is enforced, pylint runs at an 8.0 threshold, pytest reports coverage | `flake8`, `pylint`, `pytest` (Python 3.11) |
+| `bash-lint` | Syntax and best-practice checks for all `linux/*.sh` scripts | `shellcheck` |
 | `linux-smoke` | Smoke tests: L01, L07, L15 with `--json` to verify output structure | Bash, JSON validation |
-| `orchestrator` | End-to-end integration: full audit with `--min-severity Med` + report generation | Python runner, `report_generator.py` |
+| `orchestrator` | End-to-end audit with `--min-severity Med`, report generation, SARIF upload to code scanning, and a Markdown job summary | Python runner, `report_generator.py`, `upload-sarif` |
+| `baseline-gate` | Re-runs the audit against `ci/baseline.json` so the build breaks only on findings that are not accepted risk | Python runner (`--baseline`) |
 
-All jobs must pass before merging to `main`.
+All jobs must pass before merging to `main`. Locally, `make ci` runs the same
+lint → test → dry-run gate.
 
----
+### Wiring CyberSWISS into your own pipeline
+
+```yaml
+permissions:
+  contents: read
+  security-events: write        # required for the SARIF upload
+
+steps:
+  - name: Run CyberSWISS audit
+    run: |
+      python3 common/runner.py --os linux \
+        --baseline ci/baseline.json \
+        --sarif /tmp/audit.sarif \
+        --markdown - >> "$GITHUB_STEP_SUMMARY"
+
+  - name: Upload SARIF to code scanning
+    if: always()
+    uses: github/codeql-action/upload-sarif@v3
+    with:
+      sarif_file: /tmp/audit.sarif
+      category: cyberswiss
+```
+
+The run exits `2` on any finding that is not waived in `ci/baseline.json`, so
+the gate stays quiet until genuinely new risk appears. See
+[`ci/README.md`](ci/README.md) for how to create and maintain that file.
 
 ---
 
@@ -800,8 +826,6 @@ REST API:
 
 ---
 
----
-
 ## Exit Codes
 
 | Code | Meaning |
@@ -812,8 +836,6 @@ REST API:
 
 Findings waived by a `--baseline` file are excluded from this calculation — an
 audit whose every failure is formally accepted exits `0`.
-
----
 
 ---
 
@@ -842,6 +864,7 @@ make scan-sev MIN_SEV=Critical
 # Reporting
 make report              # JSON + CSV + HTML (timestamped)
 make report-db           # + save to DB + drift
+make report-diff         # drift vs last DB entry (no re-scan)
 make report-sarif        # SARIF (code scanning) + Markdown
 make report-trend        # posture trend across stored scans
 make archive             # zip current reports
@@ -865,8 +888,6 @@ make ci                  # lint + test + scan-dry
 
 ---
 
----
-
 ## Documentation
 
 | Document | Description |
@@ -875,8 +896,7 @@ make ci                  # lint + test + scan-dry
 | [docs/USAGE.md](docs/USAGE.md) | CLI usage guide, scheduling, and SIEM integration examples |
 | [docs/REMEDIATION_GUIDE.md](docs/REMEDIATION_GUIDE.md) | Detailed per-finding remediation steps |
 | [docs/RUNTIME_REQUIREMENTS.md](docs/RUNTIME_REQUIREMENTS.md) | Full OS-level dependency list for all scripts |
-
----
+| [ci/README.md](ci/README.md) | Pipeline inputs — creating and maintaining `ci/baseline.json` |
 
 ---
 
@@ -898,7 +918,7 @@ Contributions are welcome. Please follow these guidelines:
 
 1. **Fork** the repository and create a feature branch from `main`
 2. **Add tests** — new scripts require corresponding entries in `tests/`
-3. **Follow conventions** — Bash scripts must pass `shellcheck`; Python must pass `pylint` at threshold 7.0+
+3. **Follow conventions** — Bash scripts must pass `shellcheck`; Python must pass `flake8` (rules in `.flake8`) and `pylint` at threshold 8.0+. `make lint test` runs both plus the suite; `make ci` runs the full gate
 4. **Script naming** — use the next available ID prefix (`L##` / `W##`) followed by a descriptive snake_case name
 5. **Output contract** — scripts must emit at minimum: `CHECK_ID`, `STATUS` (`PASS` / `FAIL` / `WARN` / `INFO`), `SEVERITY`, and `MESSAGE` fields in JSON mode
 6. **No secrets** — never log credentials, tokens, or PII; all output must be safe for SIEM ingestion
