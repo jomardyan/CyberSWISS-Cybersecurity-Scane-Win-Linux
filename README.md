@@ -1,10 +1,10 @@
-# CyberSWISS – Enterprise Security Audit & Remediation Platform
+# CyberSWISS — Security Audit, Hardening & Compliance Scanner for Linux and Windows
 
-**Open-source security audit, hardening and compliance scanner for Linux and Windows.**
-66 CIS-aligned audit scripts (33 Bash + 33 PowerShell), a Python orchestrator, opt-in
-automated remediation, SARIF output for GitHub code scanning, SQLite scan history with
-drift detection, and SOC 2 / HIPAA / GDPR evidence reporting — self-hosted, agentless,
-and dependency-free.
+**Open-source, agentless security audit and hardening tool for Linux servers, Windows
+endpoints and Active Directory.** 66 CIS-aligned audit scripts (33 Bash + 33 PowerShell),
+a Python orchestrator, opt-in automated remediation, SARIF output for GitHub code
+scanning, SQLite scan history with drift detection, and SOC 2 / HIPAA / GDPR evidence
+reporting — self-hosted and dependency-free.
 
 [![CI](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/actions/workflows/ci.yml/badge.svg)](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -46,6 +46,8 @@ and dependency-free.
 - [Exit Codes](#exit-codes)
 - [Make Reference](#make-reference)
 - [Documentation](#documentation)
+- [Is CyberSWISS the Right Tool?](#is-cyberswiss-the-right-tool)
+- [FAQ](#faq)
 - [Security Notice](#security-notice)
 - [Contributing](#contributing)
 - [License](#license)
@@ -918,6 +920,107 @@ make ci                  # lint + test + scan-dry
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, the CI gate, and how to add a new audit check |
 | [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy and secure deployment guidance |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community standards |
+
+---
+
+## Is CyberSWISS the Right Tool?
+
+CyberSWISS is built for teams that need repeatable, evidence-producing configuration
+audits of machines they already own and administer.
+
+**It is a good fit when you want to:**
+
+- Audit **Linux servers and Windows endpoints from one tool** and get a single combined
+  report instead of two disconnected ones
+- Run **CIS-aligned hardening checks agentlessly** — nothing is installed on the scanned
+  host, and the checks are plain Bash and PowerShell you can read before you run them
+- **Gate a CI/CD pipeline** on security posture, using SARIF for GitHub code scanning and
+  exit code `2` on new regressions
+- Produce **auditor-facing evidence** for SOC 2, HIPAA or GDPR reviews, with an explicit,
+  expiring baseline file recording every accepted risk
+- Track **configuration drift over time** without standing up a server — history lives in
+  a local SQLite database
+- Keep everything **self-hosted and offline**: no SaaS backend, no telemetry, no account
+
+**It is not the right tool when you need:**
+
+- **Continuous, real-time monitoring or alerting** — CyberSWISS runs on demand or on a
+  schedule you control, and does not maintain a resident agent
+- **Offensive security or penetration testing** — the checks are defensive and
+  read-only by default; there are no exploitation capabilities
+- **Authoritative certification** — CyberSWISS maps findings to control families and
+  produces evidence, but compliance attestation remains a human, auditor-led process
+
+---
+
+## FAQ
+
+### Does CyberSWISS install an agent on the machines it scans?
+
+No. Every check is a standalone Bash or PowerShell script that runs locally on the host
+and exits. Nothing is installed, nothing stays resident, and nothing is left behind.
+
+### What does it need to run?
+
+Bash 4.0+ on Linux, PowerShell 5.1+ on Windows, and Python 3.9+ for the orchestrator,
+reporting and history. The orchestrator uses only the Python standard library — the
+packages in `requirements.txt` are for development and optional extras. Individual
+checks may call OS tooling (`nmap`, `auditd`, `docker`, RSAT, …); see
+[docs/RUNTIME_REQUIREMENTS.md](docs/RUNTIME_REQUIREMENTS.md) for the full list. Checks
+degrade gracefully when a tool is absent — they fall back to a lighter check or report
+the gap, rather than aborting the scan.
+
+### Is it safe to run against production systems?
+
+Yes, by design. Every script is **read-only unless you pass `--fix` / `-Fix`**, which is
+disabled by default and requires administrative privileges. Use `--dry-run` to see
+exactly which scripts would execute, and `--delay` to pace a scan on a busy host.
+
+### Does it need internet access?
+
+Not for the orchestrator, reporting, history or drift detection — those are entirely
+local, and no data is ever sent anywhere. A small number of checks that query package
+and CVE data or probe network services do make outbound requests; skip them with
+`--scripts` if the host is air-gapped.
+
+### How do I fail a CI build when the security posture regresses?
+
+Run the scan with `--diff` against the saved history: it exits `2` when new findings
+appear relative to the previous scan. Write SARIF with `--sarif` to surface findings in
+GitHub code scanning, and `--markdown` for a job summary or PR comment. A working
+workflow ships in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+### How do I suppress a false positive or an accepted risk?
+
+Record it in a baseline file rather than editing the check. `--write-baseline` captures
+the current failures, `--baseline-expires` stamps them with a review date, and
+`--baseline` suppresses them on later runs so they no longer affect the exit code. The
+file is versioned alongside your code, so every accepted risk is reviewable in a diff.
+
+### Can I run only some checks, or only one platform?
+
+Yes — `--os linux`, `--os windows` or `--os both` select a platform, `--scripts L07 W16`
+runs specific checks by ID, and `--min-severity` / `--status` filter what is reported.
+The full list of IDs is in [docs/CATALOG.md](docs/CATALOG.md).
+
+### Does it work with Active Directory and Group Policy?
+
+Yes. Windows check `W16` enforces domain policy through GPO-safe registry writes and
+does not require RSAT. See
+[Active Directory & GPO Integration](#active-directory--gpo-integration).
+
+### Which CIS benchmarks does it cover?
+
+Checks are **CIS-aligned** — they implement hardening controls drawn from CIS
+benchmarks and comparable baselines for Linux and Windows, and map findings to SOC 2,
+HIPAA and GDPR control families. CyberSWISS is not a certified CIS assessment tool and
+does not claim benchmark-complete coverage; see
+[docs/CATALOG.md](docs/CATALOG.md) for exactly what each check does.
+
+### Is it free to use commercially?
+
+Yes — MIT licensed, for commercial and internal use alike. Run it only against systems
+you are explicitly authorized to audit.
 
 ---
 

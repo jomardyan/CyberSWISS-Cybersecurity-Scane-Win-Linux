@@ -1,6 +1,9 @@
-# CyberSWISS Usage Guide
+# CyberSWISS Usage Guide — Running Audits, Reporting and CI/CD Integration
 
-> Detailed instructions for running audits, generating reports, integrating with CI/CD and SIEM systems, and scheduling automated scans.
+How to run CyberSWISS security audits on Linux and Windows: selecting checks, filtering by
+severity, generating HTML, JSON, CSV, SARIF and Markdown reports, saving scan history for
+drift detection, gating a CI/CD pipeline on new findings, forwarding results to a SIEM,
+and scheduling recurring scans with cron or Task Scheduler.
 
 ---
 

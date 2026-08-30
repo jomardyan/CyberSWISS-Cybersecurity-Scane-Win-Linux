@@ -1,0 +1,48 @@
+# Repository metadata — the source of truth for the GitHub "About" box.
+#
+# The description and topics below are what GitHub search, the github.com/topics
+# pages, and Google's result snippet index. Keep them in sync with the README
+# whenever the script count, platform support, or feature set changes.
+#
+# This file follows the schema of the Probot "Settings" app
+# (https://github.com/apps/settings). If that app is installed on the repository,
+# a push to the default branch applies these values automatically. If it is not,
+# apply them by hand: Repository → About → ⚙ (Settings) → Description / Topics.
+
+repository:
+  name: CyberSWISS-Cybersecurity-Scan-Win-Linux
+
+  # 315 characters — GitHub truncates descriptions at 350.
+  description: >-
+    Agentless security audit, hardening and compliance scanner for Linux, Windows
+    and Active Directory. 66 CIS-aligned checks (33 Bash + 33 PowerShell), a Python
+    orchestrator, opt-in remediation, SARIF output for GitHub code scanning, drift
+    detection and SOC 2 / HIPAA / GDPR evidence reporting. Self-hosted, no agents.
+
+  # Set once a documentation site exists (e.g. GitHub Pages built from docs/).
+  homepage: ""
+
+  # Max 20 topics, lowercase and hyphenated. Ordered most to least specific:
+  # the first few describe what this is, the rest are the broad topic pages
+  # people browse.
+  topics:
+    - security-audit
+    - security-scanner
+    - hardening
+    - cis-benchmark
+    - compliance-automation
+    - vulnerability-scanner
+    - configuration-audit
+    - drift-detection
+    - sarif
+    - devsecops
+    - linux-hardening
+    - windows-hardening
+    - active-directory
+    - powershell
+    - bash
+    - python
+    - soc2
+    - hipaa
+    - infosec
+    - security-tools
