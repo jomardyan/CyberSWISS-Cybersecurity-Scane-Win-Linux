@@ -1,6 +1,9 @@
-# CyberSWISS Runtime Requirements
+# CyberSWISS Runtime Requirements — Linux and Windows Dependencies
 
-> This document lists all dependencies required for full script coverage.  
+Everything CyberSWISS needs for full audit coverage: Python 3.9+, Bash 4+, PowerShell 5.1+,
+and the OS-level tooling individual checks call on each platform. Checks whose tooling is
+missing degrade gracefully rather than aborting the scan.
+
 > `pip install -r requirements.txt` installs Python packages only and is not sufficient for complete audit results.
 
 ---

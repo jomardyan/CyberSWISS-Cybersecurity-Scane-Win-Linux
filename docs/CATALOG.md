@@ -1,4 +1,8 @@
-# CyberSWISS Script Catalog
+# CyberSWISS Script Catalog — 66 Linux and Windows Security Checks
+
+The complete catalog of CyberSWISS audit checks: 33 Linux Bash scripts (`L01`–`L33`) and
+33 Windows PowerShell scripts (`W01`–`W33`), with what each one inspects, its severity,
+and the check IDs it emits. Use these IDs with `--scripts` to run a subset of the suite.
 
 > **Internal Use Only** — Defense-Grade Security Audit Platform  
 > All scripts are read-only by default. Remediation requires an explicit `--fix` / `-Fix` flag with administrative approval.

@@ -1,6 +1,9 @@
-# CyberSWISS Remediation Guide
+# CyberSWISS Remediation Guide — Fixing Linux and Windows Audit Findings
 
-> This guide provides **detailed remediation steps** for findings produced by CyberSWISS audit scripts.  
+Per-finding remediation steps for the issues CyberSWISS reports, covering Linux server
+hardening and Windows endpoint hardening, with the commands or policy changes that
+resolve each finding and what to verify afterwards.
+
 > All changes should be tested in a non-production environment first and approved through your change management process.
 
 ---
