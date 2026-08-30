@@ -6,9 +6,8 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -211,7 +210,8 @@ class TestRunScript:
         script = tmp_path / "pass_but_bad_exit.sh"
         script.write_text(
             '#!/usr/bin/env bash\n'
-            'echo \'{"script":"pass_but_bad_exit","host":"localhost","findings":[{"id":"X1","status":"PASS","severity":"Low"}]}\'\n'
+            'echo \'{"script":"pass_but_bad_exit","host":"localhost",'
+            '"findings":[{"id":"X1","status":"PASS","severity":"Low"}]}\'\n'
             'exit 1\n'
         )
         script.chmod(0o755)
@@ -427,7 +427,9 @@ class TestRunnerModule:
         """Dry-run with --scripts filter should only list the requested script IDs."""
         import runner
         from unittest.mock import patch
-        with patch.object(sys, 'argv', ['runner.py', '--dry-run', '--os', 'linux', '--scripts', 'L01', 'L07', '--no-colour']):
+        argv = ['runner.py', '--dry-run', '--os', 'linux',
+                '--scripts', 'L01', 'L07', '--no-colour']
+        with patch.object(sys, 'argv', argv):
             with patch('runner.run_script') as mock_run:
                 rc = runner.main()
         assert rc == 0

@@ -1,0 +1,25 @@
+# CyberSWISS – flake8 configuration
+#
+# Keeping the settings here (rather than only in the Makefile) means `flake8`
+# run bare, from an editor, or from a pre-commit hook applies the same rules
+# the CI pipeline enforces.
+[flake8]
+max-line-length = 120
+
+extend-ignore =
+    # Black-compatible slice spacing
+    E203,
+    # Line break before binary operator (conflicts with W504)
+    W503,
+    # Column alignment is used deliberately in the terminal-rendering code
+    # (runner.py tables and dashboards) to keep related assignments readable.
+    E221,
+    E272
+
+exclude =
+    .git,
+    __pycache__,
+    reports,
+    .pytest_cache,
+    .venv,
+    venv

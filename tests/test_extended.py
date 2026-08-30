@@ -13,8 +13,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "common"))
 
@@ -84,7 +82,7 @@ class TestScanDatabase:
     def test_db_creates_file(self, tmp_path):
         from db import ScanDatabase
         db_path = tmp_path / "test.db"
-        db = ScanDatabase(db_path=db_path)
+        ScanDatabase(db_path=db_path)
         assert db_path.exists()
 
     def test_save_and_list_scans(self, tmp_path):

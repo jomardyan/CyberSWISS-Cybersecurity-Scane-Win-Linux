@@ -59,7 +59,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from utils import (  # noqa: E402
     SEVERITY_ORDER,
-    coloured,
     current_host,
     current_os,
     discover_scripts,
@@ -114,14 +113,16 @@ def parse_args() -> argparse.Namespace:
         choices=list(SEVERITY_ORDER.keys()),
         default=None,
         metavar="SEV",
-        help="Only report findings at or above this severity.",
+        help="Only report findings at or above this severity. Applies to every "
+             "output format, the history database, and the exit code.",
     )
     parser.add_argument(
         "--status",
         nargs="+",
         choices=["PASS", "FAIL", "WARN", "INFO"],
         default=None,
-        help="Filter output to specific finding statuses.",
+        help="Only report findings with these statuses. Applies to every output "
+             "format, the history database, and the exit code.",
     )
     parser.add_argument(
         "--output", "-o",
@@ -193,7 +194,8 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         metavar="TAG",
         default=None,
-        help="Run only scripts whose category matches one of the given tags (case-insensitive, e.g. 'network' 'logging').",
+        help="Run only scripts whose category matches one of the given tags "
+             "(case-insensitive, e.g. 'network' 'logging').",
     )
     parser.add_argument(
         "--verbose",
@@ -322,12 +324,6 @@ def _c(text: str, code: str, no_colour: bool) -> str:
     return text if no_colour else f"{code}{text}{_RESET}"
 
 
-def _badge(label: str, code: str, width: int, no_colour: bool) -> str:
-    """Fixed-width padded badge."""
-    padded = label.center(width)
-    return _c(padded, code, no_colour)
-
-
 def _truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
@@ -337,28 +333,6 @@ def _truncate(text: str, max_len: int) -> str:
 # ── Per-script table printer ───────────────────────────────────────────────────
 _STATUS_ORDER = {"FAIL": 0, "WARN": 1, "INFO": 2, "PASS": 3}
 _STATUS_ICON  = {"FAIL": "✗", "WARN": "⚠", "PASS": "✓", "INFO": "ℹ"}
-
-
-def print_finding(finding: dict, no_colour: bool = False) -> None:
-    """Legacy single-finding printer (used outside the table path)."""
-    status = finding.get("status", "?")
-    sev    = finding.get("severity", "?")
-    fid    = finding.get("id", "?")
-    name   = finding.get("name", "?")
-    detail = finding.get("detail", "")
-    remedy = finding.get("remediation", "")
-
-    line = f"[{status}] [{sev}] {fid}: {name}"
-    if not no_colour:
-        line = coloured(line, status)
-    print(line)
-    if detail:
-        print(f"       Detail : {detail}")
-    if status not in ("PASS", "INFO") and remedy:
-        rem_line = f"       Remedy : {remedy}"
-        if not no_colour:
-            rem_line = f"\033[0;36m{rem_line}\033[0m"
-        print(rem_line)
 
 
 def _print_findings_table(
@@ -412,14 +386,19 @@ def _print_findings_table(
 
     sep = _c("─" * W, _DIM, no_colour)
     print(f"\n{sep}")
-    script_line = f"{_c('│', _DIM, no_colour)} {icon_txt}  {_BOLD if not no_colour else ''}{header_label}{_RESET if not no_colour else ''}  {_c(f'({host})', _DIM, no_colour)}  {counts}"
+    bold = _BOLD if not no_colour else ""
+    reset = _RESET if not no_colour else ""
+    script_line = (
+        f"{_c('│', _DIM, no_colour)} {icon_txt}  {bold}{header_label}{reset}  "
+        f"{_c(f'({host})', _DIM, no_colour)}  {counts}"
+    )
     print(script_line)
 
     if not actionable:
         return total, fails, warns
 
     # Column widths  (ID | Status | Sev | Name | Detail)
-    id_w   = min(12, max((len(f.get("id","")) for f in actionable), default=4))
+    id_w   = min(12, max((len(f.get("id", "")) for f in actionable), default=4))
     st_w   = 4
     sv_w   = 8
     name_w = 28
@@ -430,7 +409,6 @@ def _print_findings_table(
     def _col(t: str, w: int) -> str:
         return t.ljust(w)[:w]
 
-    bar = _c("│", _DIM, no_colour)
     hdr = (
         f"  {_c(_col('ID',     id_w),   _DIM, no_colour)}  "
         f"{_c(_col('ST',    st_w),   _DIM, no_colour)}  "
@@ -512,7 +490,9 @@ def print_script_result(
     fix_report = result.get("fix_report")
     if isinstance(fix_report, dict):
         if fix_report.get("verification_error"):
-            print(_c(f"    ⚠ Fix verification failed: {fix_report['verification_error']}", _STATUS_STYLE['WARN'], no_colour))
+            print(_c(
+                f"    ⚠ Fix verification failed: {fix_report['verification_error']}",
+                _STATUS_STYLE["WARN"], no_colour))
         else:
             n_fixed     = fix_report.get("fixed_count", 0)
             n_remaining = fix_report.get("remaining_count", 0)
@@ -686,6 +666,61 @@ def _run_with_spinner(s: dict, timeout: int, fix_mode: bool, no_colour: bool) ->
     return result_holder[0]
 
 
+# ── History helpers ────────────────────────────────────────────────────────────
+def emit_stored_drift(no_colour: bool, json_mode: bool) -> dict | None:
+    """
+    Render drift for the most recently stored scan against its predecessor.
+
+    This is the ``--diff --dry-run`` path: report on what the history already
+    knows without executing a fresh audit.
+
+    Returns the drift dict, or ``None`` when the history is unusable.
+    """
+    try:
+        from db import ScanDatabase, format_drift_report  # noqa: PLC0415
+
+        database = ScanDatabase()
+        latest = database.get_last_scan()
+        if latest is None:
+            if not json_mode:
+                print("\nDrift detection: no scan history yet – run with --save-db first.")
+            return None
+
+        try:
+            stored_report = json.loads(latest.get("json_data") or "{}")
+        except json.JSONDecodeError:
+            stored_report = {}
+        if not stored_report.get("results"):
+            # Rebuild the minimum detect_drift() needs from the findings table.
+            stored_report = {
+                "host": latest.get("host"),
+                "generated_at": latest.get("timestamp", ""),
+                "results": [{
+                    "script": f.get("script", "unknown"),
+                    "findings": [{
+                        "id": f.get("finding_id", ""),
+                        "name": f.get("name", ""),
+                        "severity": f.get("severity", ""),
+                        "status": f.get("status", ""),
+                    }],
+                } for f in latest.get("findings", [])],
+            }
+
+        drift = database.detect_drift(stored_report, current_scan_id=latest["id"])
+        if not json_mode:
+            if drift["has_drift"]:
+                print("\n" + format_drift_report(drift, no_colour=no_colour))
+            else:
+                print(
+                    f"\nDrift detection: scan #{latest['id']} shows no change "
+                    "versus the scan before it."
+                )
+        return drift
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: Drift analysis failed: {exc}", file=sys.stderr)
+        return None
+
+
 # ── Trend helper ───────────────────────────────────────────────────────────────
 def emit_trend(limit: int, no_colour: bool, json_mode: bool) -> dict | None:
     """
@@ -739,25 +774,34 @@ def main() -> int:
         return 1
 
     if args.dry_run:
-        if args.json:
-            dry_report = {
-                "cyberswiss_report": True,
-                "dry_run": True,
-                "timestamp": now_iso(),
-                "scripts": [
-                    {"id": s["id"], "os": s["os"], "lang": s["lang"], "path": str(s["path"]), "name": s.get("name", "")}
-                    for s in scripts
-                ],
-            }
-            print(json.dumps(dry_report, indent=2, default=str))
-        else:
+        dry_report: dict = {
+            "cyberswiss_report": True,
+            "dry_run": True,
+            "timestamp": now_iso(),
+            "scripts": [
+                {"id": s["id"], "os": s["os"], "lang": s["lang"], "path": str(s["path"]), "name": s.get("name", "")}
+                for s in scripts
+            ],
+        }
+        if not args.json:
             print(f"\nDry-run: {len(scripts)} script(s) would run:\n")
             for s in scripts:
                 print(f"  {s['id']:6s}  {s['os']:8s}  {s['lang']:12s}  {s['path']}")
+
+        # --diff / --trend without a scan: report on what the history already
+        # knows.  This is what `make report-diff` and `make report-trend` use.
+        if args.diff:
+            drift = emit_stored_drift(args.no_colour or args.json, args.json)
+            if drift is not None:
+                dry_report["drift"] = drift
         if args.trend:
             trend = emit_trend(args.trend, args.no_colour or args.json, args.json)
-            if args.json and trend is not None:
-                print(json.dumps({"trend": trend}, indent=2, default=str))
+            if trend is not None:
+                dry_report["trend"] = trend
+
+        # One document, printed last so drift and trend are part of it.
+        if args.json:
+            print(json.dumps(dry_report, indent=2, default=str))
         return 0
 
     if not args.json:
@@ -824,6 +868,18 @@ def main() -> int:
             )
         return 130
 
+    # ── Apply reporting filters ────────────────────────────────────────────────
+    # These shape every downstream output – terminal, JSON, HTML, CSV, SARIF,
+    # Markdown, the history database, and the exit code – so that what is
+    # reported is exactly what was asked for.
+    if args.min_severity or args.status:
+        for result in all_results:
+            result["findings"] = filter_findings(
+                result.get("findings", []),
+                min_severity=args.min_severity,
+                status_filter=args.status,
+            )
+
     # ── Consolidate ────────────────────────────────────────────────────────────
     consolidated = build_consolidated_report(all_results)
 
@@ -860,7 +916,8 @@ def main() -> int:
         count_supp = len(all_findings_flat) - len(live_findings)
         count_crit = sum(1 for f in live_findings if f.get("severity") == "Critical" and f.get("status") == "FAIL")
         count_high = sum(1 for f in live_findings if f.get("severity") == "High"     and f.get("status") == "FAIL")
-        count_med  = sum(1 for f in live_findings if f.get("severity") == "Med"      and f.get("status") in ("FAIL", "WARN"))
+        count_med  = sum(1 for f in live_findings
+                         if f.get("severity") == "Med" and f.get("status") in ("FAIL", "WARN"))
         count_warn = sum(1 for f in live_findings if f.get("status") == "WARN")
         count_pass = sum(1 for f in all_findings_flat if f.get("status") == "PASS")
         count_info = sum(1 for f in all_findings_flat if f.get("status") == "INFO")

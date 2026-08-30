@@ -176,6 +176,27 @@ improving / degrading / stable verdict, and the scripts contributing the most
 failures in the latest scan. The same data is available as JSON from
 `GET /api/v1/trend?limit=10&host=NAME`.
 
+### Managing Scan History
+```bash
+# Browse what is stored
+python3 common/db.py list
+python3 common/db.py list --tag L07          # scans that ran the SSH checks
+python3 common/db.py list --host web-prod-01
+
+# Inspect and compare
+python3 common/db.py show 12                 # findings + tags for one scan
+python3 common/db.py drift 12                # vs the scan before it (exit 2 on new findings)
+python3 common/db.py trend --limit 10
+
+# Retention – keep the database from growing without bound
+python3 common/db.py prune --keep 50
+```
+
+Add `--json` to any subcommand for machine-readable output, and `--db-path FILE`
+to work against a database other than `reports/cyberswiss.db`. Scans are tagged
+automatically with the script IDs they ran, the OS families covered, and
+`host:<name>` — those tags are what `--tag` matches.
+
 ### Rate-Limited Scanning (Evasion)
 ```bash
 # Insert 5-second delay between scripts to avoid IDS/rate-limiting
@@ -278,11 +299,15 @@ Options:
   --scripts ID [ID ...]        Run specific script IDs (e.g. L07 W16 L21)
                                If not provided, runs all scripts for chosen OS
   
-  --min-severity SEV           Only show findings >= severity level
+  --min-severity SEV           Only report findings >= severity level
                                Options: Info, Low, Med, High, Critical
+                               Applies to every output format, the history
+                               database, and the exit code
   
-  --status STAT [STAT ...]     Only show findings with specific status
+  --status STAT [STAT ...]     Only report findings with these statuses
                                Options: PASS, FAIL, WARN, INFO
+                               Applies to every output format, the history
+                               database, and the exit code
   
   --output FILE                Write JSON report to FILE
   
@@ -299,7 +324,9 @@ Options:
                                Sized for PR comments and CI job summaries
                                (all output flags accept - for stdout)
   
-  --json                       Output JSON to stdout (incompatible with --output)
+  --json                       Print the consolidated report as JSON to stdout.
+                               Can be combined with --output and every other
+                               output flag.
   
   --fix                        Apply opt-in fixes. Default is read-only.
                                Destructive operations have 10-second abort window.

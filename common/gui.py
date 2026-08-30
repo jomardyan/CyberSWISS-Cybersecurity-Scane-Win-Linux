@@ -1233,7 +1233,8 @@ class CyberSWISSApp(tk.Tk):
         )
         self._add_tooltip(
             self._run_btn,
-            "Start execution for the currently selected scripts using the active timeout, delay, severity, and fix settings.",
+            "Start execution for the currently selected scripts using the active "
+            "timeout, delay, severity, and fix settings.",
         )
         self._add_tooltip(
             self._stop_btn,
@@ -1257,7 +1258,8 @@ class CyberSWISSApp(tk.Tk):
         )
         self._add_tooltip(
             self._fix_check,
-            "Run scripts in remediation mode, then immediately re-audit them so the GUI can show what was actually fixed and what still remains.",
+            "Run scripts in remediation mode, then immediately re-audit them so the "
+            "GUI can show what was actually fixed and what still remains.",
         )
         self._add_tooltip(
             self._autoscroll_check,
@@ -1269,7 +1271,8 @@ class CyberSWISSApp(tk.Tk):
         )
         self._add_tooltip(
             self._severity_combo,
-            "Hide findings below this severity in the live log and findings table. Raw results are still preserved for export.",
+            "Hide findings below this severity in the live log and findings table. "
+            "Raw results are still preserved for export.",
         )
         self._add_tooltip(
             self._timeout_spin,
@@ -1769,7 +1772,8 @@ class CyberSWISSApp(tk.Tk):
                 "header",
             )
             self._append_output(
-                "  " + " ".join(_build_script_command(script["path"], json_mode=True, fix_mode=self._fix_var.get())) + "\n",
+                "  " + " ".join(_build_script_command(
+                    script["path"], json_mode=True, fix_mode=self._fix_var.get())) + "\n",
                 "muted",
             )
         self._summary_var.set(f"Dry-run complete for {len(selected)} script(s).")

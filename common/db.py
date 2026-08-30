@@ -12,9 +12,19 @@ Usage (from runner.py)
     db = ScanDatabase()
     db.save_scan(consolidated_report)
     drift = db.detect_drift(consolidated_report)
+
+Usage (command line)
+--------------------
+    python db.py list                  # recent scans
+    python db.py list --tag L07        # scans that included a given check
+    python db.py show 12               # one scan with its findings
+    python db.py trend --limit 10      # posture trend
+    python db.py drift 12              # drift for a scan vs its predecessor
+    python db.py prune --keep 50       # retention: drop all but the newest N
 """
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import sqlite3
@@ -105,6 +115,28 @@ class ScanDatabase:
             print(f"[db] Schema init error: {exc}", file=sys.stderr)
             logger.error("Schema init error: %s", exc)
 
+    @staticmethod
+    def _extract_tags(report: dict) -> list[str]:
+        """
+        Derive the tag set for a scan: the OS families and script IDs covered.
+
+        Tags make a stored scan searchable ("show me every scan that included
+        the firewall checks") without unpacking the JSON blob of each row.
+        """
+        tags: set[str] = set()
+        for result in report.get("results", []):
+            meta = result.get("script_meta") or {}
+            script_id = str(meta.get("id") or str(result.get("script", "")).split("_")[0])
+            if script_id:
+                tags.add(script_id.upper())
+            os_name = meta.get("os")
+            if os_name:
+                tags.add(str(os_name).lower())
+        host = report.get("host")
+        if host:
+            tags.add(f"host:{host}")
+        return sorted(tags)
+
     def _extract_findings(self, report: dict) -> list[dict[str, Any]]:
         """Flatten all findings from a consolidated report dict."""
         findings: list[dict[str, Any]] = []
@@ -166,6 +198,11 @@ class ScanDatabase:
                      total_findings, json_data),
                 )
                 scan_id: int = cur.lastrowid  # type: ignore[assignment]
+
+                conn.executemany(
+                    "INSERT INTO scan_tags (scan_id, tag) VALUES (?, ?)",
+                    [(scan_id, tag) for tag in self._extract_tags(report)],
+                )
 
                 conn.executemany(
                     """
@@ -384,7 +421,7 @@ class ScanDatabase:
             return empty
 
     def list_scans(
-        self, limit: int = 20, host: str | None = None
+        self, limit: int = 20, host: str | None = None, tag: str | None = None
     ) -> list[dict]:
         """
         Return a list of scan summaries (without full findings), most recent
@@ -396,32 +433,37 @@ class ScanDatabase:
             Maximum number of rows to return.
         host:
             Restrict to a specific hostname.
+        tag:
+            Restrict to scans carrying this tag (a script ID such as ``L07``,
+            an OS name, or ``host:<name>``). See :meth:`_extract_tags`.
         """
         try:
             with self._connect() as conn:
+                clauses: list[str] = []
+                params: list[Any] = []
                 if host:
-                    rows = conn.execute(
-                        """
-                        SELECT id, host, timestamp, scripts_run, fail_count,
-                               warn_count, total_findings
-                        FROM scans
-                        WHERE host = ?
-                        ORDER BY id DESC
-                        LIMIT ?
-                        """,
-                        (host, limit),
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        """
-                        SELECT id, host, timestamp, scripts_run, fail_count,
-                               warn_count, total_findings
-                        FROM scans
-                        ORDER BY id DESC
-                        LIMIT ?
-                        """,
-                        (limit,),
-                    ).fetchall()
+                    clauses.append("host = ?")
+                    params.append(host)
+                if tag:
+                    clauses.append(
+                        "id IN (SELECT scan_id FROM scan_tags "
+                        "WHERE tag = ? COLLATE NOCASE)"
+                    )
+                    params.append(tag)
+                where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+                params.append(limit)
+
+                rows = conn.execute(
+                    f"""
+                    SELECT id, host, timestamp, scripts_run, fail_count,
+                           warn_count, total_findings
+                    FROM scans
+                    {where}
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
                 return [dict(r) for r in rows]
         except sqlite3.Error as exc:
             print(f"[db] list_scans error: {exc}", file=sys.stderr)
@@ -444,6 +486,13 @@ class ScanDatabase:
                     dict(r)
                     for r in conn.execute(
                         "SELECT * FROM findings WHERE scan_id = ?", (scan_id,)
+                    ).fetchall()
+                ]
+                scan["tags"] = [
+                    r["tag"]
+                    for r in conn.execute(
+                        "SELECT tag FROM scan_tags WHERE scan_id = ? ORDER BY tag",
+                        (scan_id,),
                     ).fetchall()
                 ]
                 return scan
@@ -845,3 +894,128 @@ def format_trend_report(trend: dict, no_colour: bool = False) -> str:
 
     lines.append("=" * 60)
     return "\n".join(lines)
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the scan history tool."""
+    parser = argparse.ArgumentParser(
+        prog="db.py",
+        description="CyberSWISS scan history database tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--db-path", default=None, metavar="FILE",
+        help="SQLite file to operate on (default: reports/cyberswiss.db).",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_list = sub.add_parser("list", help="List stored scans, most recent first")
+    p_list.add_argument("--limit", type=int, default=20)
+    p_list.add_argument("--host", default=None)
+    p_list.add_argument("--tag", default=None, help="Filter by tag (script ID, OS, or host:NAME)")
+
+    p_show = sub.add_parser("show", help="Show one scan and its findings")
+    p_show.add_argument("scan_id", type=int)
+
+    p_trend = sub.add_parser("trend", help="Posture trend across recent scans")
+    p_trend.add_argument("--limit", type=int, default=10)
+    p_trend.add_argument("--host", default=None)
+
+    p_drift = sub.add_parser("drift", help="Drift for a scan vs its predecessor")
+    p_drift.add_argument("scan_id", type=int)
+
+    p_prune = sub.add_parser("prune", help="Delete all but the most recent N scans")
+    p_prune.add_argument("--keep", type=int, default=50)
+    p_prune.add_argument("--host", default=None)
+
+    for sub_parser in (p_list, p_show, p_trend, p_drift, p_prune):
+        sub_parser.add_argument("--json", action="store_true", help="Emit JSON instead of text")
+        sub_parser.add_argument("--no-colour", action="store_true", help="Disable ANSI colour")
+
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Command-line entry point for inspecting and pruning scan history."""
+    args = parse_args(argv)
+    database = ScanDatabase(db_path=args.db_path)
+
+    if args.command == "list":
+        scans = database.list_scans(limit=args.limit, host=args.host, tag=args.tag)
+        if args.json:
+            print(json.dumps({"scans": scans, "count": len(scans)}, indent=2, default=str))
+        elif not scans:
+            print("No scans stored yet – run the audit with --save-db first.")
+        else:
+            print(f"{'ID':>5}  {'Host':<20} {'Timestamp':<32} {'FAIL':>5} {'WARN':>5} {'Total':>6}")
+            print("-" * 80)
+            for scan in scans:
+                print(
+                    f"{scan['id']:>5}  {str(scan.get('host', ''))[:20]:<20} "
+                    f"{str(scan.get('timestamp', ''))[:32]:<32} "
+                    f"{scan.get('fail_count', 0):>5} {scan.get('warn_count', 0):>5} "
+                    f"{scan.get('total_findings', 0):>6}"
+                )
+        return 0
+
+    if args.command == "show":
+        scan = database.get_scan(args.scan_id)
+        if scan is None:
+            print(f"Scan {args.scan_id} not found.", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(scan, indent=2, default=str))
+        else:
+            print(f"Scan #{scan['id']}  host={scan.get('host')}  {scan.get('timestamp')}")
+            print(f"Tags: {', '.join(scan.get('tags', [])) or '(none)'}")
+            print(
+                f"Scripts: {scan.get('scripts_run', 0)}   FAIL: {scan.get('fail_count', 0)}   "
+                f"WARN: {scan.get('warn_count', 0)}   Total: {scan.get('total_findings', 0)}"
+            )
+            print("-" * 80)
+            for finding in scan.get("findings", []):
+                print(
+                    f"  [{finding.get('status', '?'):4s}] [{finding.get('severity', '?'):8s}] "
+                    f"{finding.get('finding_id', '')}: {finding.get('name', '')}"
+                )
+        return 0
+
+    if args.command == "trend":
+        trend = database.get_trend(limit=args.limit, host=args.host)
+        if args.json:
+            print(json.dumps(trend, indent=2, default=str))
+        else:
+            print(format_trend_report(trend, no_colour=args.no_colour))
+        return 0
+
+    if args.command == "drift":
+        scan = database.get_scan(args.scan_id)
+        if scan is None:
+            print(f"Scan {args.scan_id} not found.", file=sys.stderr)
+            return 1
+        try:
+            stored_report = json.loads(scan.get("json_data") or "{}")
+        except json.JSONDecodeError:
+            stored_report = {}
+        drift = database.detect_drift(stored_report, current_scan_id=args.scan_id)
+        if args.json:
+            print(json.dumps(drift, indent=2, default=str))
+        else:
+            print(format_drift_report(drift, no_colour=args.no_colour))
+        return 2 if drift.get("new_findings") else 0
+
+    if args.command == "prune":
+        deleted = database.delete_old_scans(keep_last=args.keep, host=args.host)
+        if args.json:
+            print(json.dumps({"deleted": deleted, "kept": args.keep}, default=str))
+        else:
+            print(f"Deleted {deleted} scan(s); kept the {args.keep} most recent.")
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
