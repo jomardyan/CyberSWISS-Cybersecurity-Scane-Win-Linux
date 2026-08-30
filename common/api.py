@@ -10,8 +10,10 @@ Endpoints
     GET  /api/v1/health           – Health check and version info
     GET  /api/v1/scripts          – List available audit scripts
     POST /api/v1/scan             – Start a scan (async, returns job_id)
+                                    body: os, scripts, tags, min_severity,
+                                          fix, timeout
     GET  /api/v1/scan/{id}        – Get scan status and results
-    GET  /api/v1/history          – List past scans
+    GET  /api/v1/history          – List past scans (?limit=N&host=NAME&tag=L07)
     GET  /api/v1/report/{id}      – Get a report for a scan
                                     (?format=html|json|sarif|markdown|csv|text)
     GET  /api/v1/drift/{id}       – Get drift report vs previous scan
@@ -53,7 +55,14 @@ from report_generator import (  # noqa: E402
     generate_sarif,
     generate_text,
 )
-from utils import current_host, discover_scripts, now_iso, run_script  # noqa: E402
+from utils import (  # noqa: E402
+    SEVERITY_ORDER,
+    current_host,
+    discover_scripts,
+    filter_findings,
+    now_iso,
+    run_script,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,8 +77,29 @@ API_PREFIX = "/api/v1"
 # In-memory job registry: job_id → job dict
 # Each job dict holds: status, job_id, started_at, finished_at,
 #                      scripts_total, scripts_done, results, error
+#
+# Finished jobs hold a full consolidated report, so the registry is bounded:
+# a long-running server would otherwise retain every scan it has ever executed.
+# Completed scans remain available from the history database via /history and
+# /report/{id}; only the transient job envelope is evicted.
+MAX_FINISHED_JOBS = 100
+
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
+
+
+def _prune_finished_jobs() -> None:
+    """Evict the oldest finished jobs beyond MAX_FINISHED_JOBS. Caller holds the lock."""
+    finished = [
+        (job.get("finished_at", ""), job_id)
+        for job_id, job in _jobs.items()
+        if job.get("status") in ("complete", "error")
+    ]
+    if len(finished) <= MAX_FINISHED_JOBS:
+        return
+    finished.sort()
+    for _, job_id in finished[: len(finished) - MAX_FINISHED_JOBS]:
+        _jobs.pop(job_id, None)
 
 
 def validate_scan_request(body: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
@@ -95,6 +125,17 @@ def validate_scan_request(body: dict[str, Any]) -> tuple[dict[str, Any] | None, 
     if timeout < 1 or timeout > 3600:
         return None, "Field 'timeout' must be between 1 and 3600 seconds."
 
+    tags = body.get("tags")
+    if tags is not None:
+        if not isinstance(tags, list) or not all(isinstance(t, str) and t.strip() for t in tags):
+            return None, "Field 'tags' must be a list of non-empty category tags."
+        tags = sorted({t.strip() for t in tags})
+
+    min_severity = body.get("min_severity")
+    if min_severity is not None:
+        if not isinstance(min_severity, str) or min_severity not in SEVERITY_ORDER:
+            return None, f"Field 'min_severity' must be one of: {', '.join(SEVERITY_ORDER)}."
+
     script_ids = body.get("scripts")
     if script_ids is not None:
         if not isinstance(script_ids, list) or not all(isinstance(item, str) and item.strip() for item in script_ids):
@@ -108,6 +149,8 @@ def validate_scan_request(body: dict[str, Any]) -> tuple[dict[str, Any] | None, 
     return {
         "os_filter": os_filter,
         "script_ids": script_ids,
+        "tags": tags,
+        "min_severity": min_severity,
         "fix_mode": fix_mode,
         "timeout": timeout,
     }, None
@@ -122,6 +165,8 @@ def _run_scan_job(
     fix_mode: bool,
     timeout: int,
     db: ScanDatabase,
+    tags: list[str] | None = None,
+    min_severity: str | None = None,
 ) -> None:
     """
     Execute the requested audit scripts in a background thread, update the
@@ -133,6 +178,12 @@ def _run_scan_job(
         if script_ids:
             upper_ids = {sid.upper() for sid in script_ids}
             scripts = [s for s in scripts if s["id"].upper() in upper_ids]
+        if tags:
+            lower_tags = {t.lower() for t in tags}
+            scripts = [
+                s for s in scripts
+                if any(t in s.get("category", "").lower() for t in lower_tags)
+            ]
 
         with _jobs_lock:
             _jobs[job_id]["scripts_total"] = len(scripts)
@@ -151,6 +202,12 @@ def _run_scan_job(
 
             with _jobs_lock:
                 _jobs[job_id]["scripts_done"] += 1
+
+        if min_severity:
+            for result in results:
+                result["findings"] = filter_findings(
+                    result.get("findings", []), min_severity=min_severity
+                )
 
         # Build a consolidated report dict (same structure as runner.py)
         all_findings = [f for r in results for f in r.get("findings", [])]
@@ -173,6 +230,7 @@ def _run_scan_job(
             _jobs[job_id]["finished_at"] = now_iso()
             _jobs[job_id]["scan_id"] = scan_id
             _jobs[job_id]["report"] = consolidated
+            _prune_finished_jobs()
 
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Job %s failed: %s", job_id, exc)
@@ -180,6 +238,7 @@ def _run_scan_job(
             _jobs[job_id]["status"] = "error"
             _jobs[job_id]["error"] = str(exc)
             _jobs[job_id]["finished_at"] = now_iso()
+            _prune_finished_jobs()
 
 
 # ── Request Handler ────────────────────────────────────────────────────────────
@@ -392,6 +451,8 @@ class CyberSWISSHandler(BaseHTTPRequestHandler):
 
         os_filter = scan_request["os_filter"]
         script_ids = scan_request["script_ids"]
+        tags = scan_request["tags"]
+        min_severity = scan_request["min_severity"]
         fix_mode = scan_request["fix_mode"]
         timeout = scan_request["timeout"]
 
@@ -415,6 +476,7 @@ class CyberSWISSHandler(BaseHTTPRequestHandler):
         thread = threading.Thread(
             target=_run_scan_job,
             args=(job_id, os_filter, script_ids, fix_mode, timeout, self.db),
+            kwargs={"tags": tags, "min_severity": min_severity},
             daemon=True,
         )
         thread.start()
@@ -463,9 +525,26 @@ class CyberSWISSHandler(BaseHTTPRequestHandler):
         self._send_json(response)
 
     def handle_history(self) -> None:
-        """GET /api/v1/history – list stored scan summaries."""
-        scans = self.db.list_scans(limit=50)
-        self._send_json({"scans": scans, "count": len(scans)})
+        """
+        GET /api/v1/history – list stored scan summaries.
+
+        Query parameters: ``limit`` (1–500, default 50), ``host``, and ``tag``
+        (a script ID such as ``L07``, an OS name, or ``host:<name>``).
+        """
+        limit = self._query_int("limit", default=50, minimum=1, maximum=500)
+        if limit is None:
+            self._send_error("Query parameter 'limit' must be an integer between 1 and 500.")
+            return
+
+        query = self._query()
+        host = query.get("host", [None])[0]
+        tag = query.get("tag", [None])[0]
+
+        scans = self.db.list_scans(limit=limit, host=host, tag=tag)
+        self._send_json({
+            "scans": scans, "count": len(scans),
+            "host": host, "tag": tag, "limit": limit,
+        })
 
     #: Report formats served by GET /api/v1/report/{id}?format=…
     REPORT_FORMATS = ("html", "json", "sarif", "markdown", "csv", "text")

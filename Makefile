@@ -46,6 +46,8 @@ DELAY       ?= 0
 TAG         ?=
 BASELINE    ?= ci/baseline.json
 TREND       ?= 10
+KEEP        ?= 50
+SCAN_ID     ?=
 
 # Verbose flag: VERBOSE=1 passes --verbose to the runner
 _VERBOSE    := $(if $(filter 1,$(VERBOSE)),--verbose,)
@@ -125,7 +127,7 @@ endef
     report report-db report-diff report-sarif report-trend \
     baseline baseline-show \
     archive archive-clean \
-    db-clean clean clean-reports clean-all \
+    db-list db-show db-prune db-clean clean clean-reports clean-all \
     check-python check-runner check-lint-tools upgrade \
     format format-check \
     test test-cov test-fast test-verbose \
@@ -179,6 +181,9 @@ help:
 	@printf '  $(CYN)%-26s$(RST) %s\n' clean           "Remove Python cache files"
 	@printf '  $(CYN)%-26s$(RST) %s\n' clean-reports   "Remove generated reports (keeps archive/)"
 	@printf '  $(CYN)%-26s$(RST) %s\n' clean-all       "clean + clean-reports"
+	@printf '  $(CYN)%-26s$(RST) %s\n' db-list         "List stored scans in the history database"
+	@printf '  $(CYN)%-26s$(RST) %s\n' "db-show SCAN_ID=12"    "Show one stored scan and its findings"
+	@printf '  $(CYN)%-26s$(RST) %s\n' "db-prune KEEP=50"      "Retention: keep only the newest N scans"
 	@printf '  $(CYN)%-26s$(RST) %s\n' db-clean        "Remove the local scan history database"
 	@echo ''
 	@printf '$(BOLD)Variables$(RST) (pass on command line)\n'
@@ -190,6 +195,8 @@ help:
 	@printf '  $(YLW)%-26s$(RST) %s\n' "VERBOSE=1"            "Enable verbose runner output"
 	@printf '  $(YLW)%-26s$(RST) %s\n' "BASELINE=ci/baseline.json" "Baseline file for baseline targets"
 	@printf '  $(YLW)%-26s$(RST) %s\n' "TREND=10"             "Scan window for report-trend"
+	@printf '  $(YLW)%-26s$(RST) %s\n' "KEEP=50"              "Scans to retain for db-prune"
+	@printf '  $(YLW)%-26s$(RST) %s\n' "SCAN_ID=12"           "Scan to inspect with db-show"
 	@echo ''
 
 # =============================================================================
@@ -408,7 +415,8 @@ scan-baselined: check-python check-runner
 
 archive:
 	@mkdir -p $(ARCHIVE_DIR)
-	@FILES=$$(ls $(REPORT_DIR)/*.json $(REPORT_DIR)/*.csv $(REPORT_DIR)/*.html 2>/dev/null); \
+	@FILES=$$(ls $(REPORT_DIR)/*.json $(REPORT_DIR)/*.csv $(REPORT_DIR)/*.html \
+	    $(REPORT_DIR)/*.txt $(REPORT_DIR)/*.sarif $(REPORT_DIR)/*.md 2>/dev/null); \
 	if [ -z "$$FILES" ]; then \
 	    printf '$(YLW)[!]$(RST) No report files found in $(REPORT_DIR)/ to archive.\n'; \
 	else \
@@ -436,11 +444,24 @@ clean:
 
 clean-reports:
 	$(call _warn,"This will delete all files in $(REPORT_DIR)/ except the archive/ subdirectory.")
-	@find $(REPORT_DIR) -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" -o -name "*.html" \) \
+	@find $(REPORT_DIR) -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" -o -name "*.html" \
+	    -o -name "*.txt" -o -name "*.sarif" -o -name "*.md" \) \
 	    -delete 2>/dev/null && printf '$(GRN)[✔]$(RST) Report files removed.\n' || true
 
 clean-all: clean clean-reports
 	$(call _ok,"Full cleanup complete.")
+
+db-list: check-python
+	$(call _info,"Stored scans:")
+	$(PYTHON) common/db.py list --limit 20
+
+db-show: check-python
+	@test -n "$(SCAN_ID)" || { printf '$(RED)[✘] Set SCAN_ID, e.g. make db-show SCAN_ID=12$(RST)\n' >&2; exit 1; }
+	$(PYTHON) common/db.py show $(SCAN_ID)
+
+db-prune: check-python
+	$(call _warn,"Deleting all but the $(KEEP) most recent scans…")
+	$(PYTHON) common/db.py prune --keep $(KEEP)
 
 db-clean:
 	$(call _warn,"This will delete the local scan history database.")
@@ -486,8 +507,8 @@ upgrade: check-python
 	    | grep -v '^\-e' \
 	    | cut -d = -f 1 \
 	    | xargs -r $(PIP) install --upgrade \
-	    && $(call _ok,"All packages upgraded.") \
-	    || $(call _warn,"Some packages may not have upgraded cleanly. Check output above.")
+	    && printf '$(GRN)[✔]$(RST) All packages upgraded.\n' \
+	    || printf '$(YLW)[!]$(RST) Some packages may not have upgraded cleanly. Check output above.\n' 
 
 # =============================================================================
 # [DEV] FORMATTING
@@ -558,10 +579,9 @@ lint: check-lint-tools lint-python lint-shell lint-pylint
 
 lint-python: check-lint-tools
 	$(call _info,"Running flake8…")
+	@# Rules live in .flake8 so editors and pre-commit hooks match CI exactly.
 	$(PYTHON) -m flake8 common/ tests/ \
-	    --max-line-length=120 \
-	    --extend-ignore=E203,W503 \
-	    && $(call _ok,"flake8 passed.") \
+	    && printf '$(GRN)[✔]$(RST) flake8 passed.\n' \
 	    || { printf '$(RED)[✘] flake8 found issues. Fix before committing.$(RST)\n' >&2; exit 1; }
 
 lint-shell:

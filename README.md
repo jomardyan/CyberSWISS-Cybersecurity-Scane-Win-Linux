@@ -194,8 +194,11 @@ CyberSWISS/
 │   ├── gui.py                      # Tkinter GUI for interactive scanning
 │   └── utils.py                    # Shared utilities: script discovery, execution, filtering
 │
+├── .github/workflows/
+│   └── ci.yml                      # GitHub Actions pipeline (lint, test, audit, SARIF, gate)
+│
 ├── ci/
-│   └── audit_pipeline.yml          # Legacy CI config
+│   └── README.md                   # Pipeline inputs (ci/baseline.json – accepted risk)
 │
 ├── docs/
 │   ├── CATALOG.md                  # Complete script catalog with descriptions & severity
@@ -207,6 +210,9 @@ CyberSWISS/
 │   ├── test_runner.py              # Orchestration & CLI argument tests
 │   ├── test_extended.py            # DB, API, report generation & new-script tests
 │   ├── test_governance.py          # Baselines, SARIF/Markdown output, trend analytics
+│   ├── test_api_endpoints.py       # HTTP-level tests against a live API server
+│   ├── test_orchestration.py       # Reporting filters, scan tags, db.py CLI, HTML report
+│   ├── test_gui_structure.py       # GUI menu/binding wiring (no tkinter required)
 │   └── test_utils.py              # Utility function tests
 │
 ├── setup/
@@ -350,6 +356,27 @@ python3 common/runner.py --trend 10 --dry-run
 
 `GET /api/v1/trend?limit=10&host=web-prod-01` returns the same data as JSON.
 
+#### Managing the history database
+
+`common/db.py` is the command-line front end to the SQLite history — listing,
+inspecting, comparing, and pruning stored scans without writing SQL:
+
+```bash
+python3 common/db.py list                  # recent scans, newest first
+python3 common/db.py list --tag L07        # only scans that included the SSH checks
+python3 common/db.py list --host web-prod-01
+python3 common/db.py show 12               # one scan with its findings and tags
+python3 common/db.py trend --limit 10      # posture trend
+python3 common/db.py drift 12              # drift for a scan vs its predecessor
+python3 common/db.py prune --keep 50       # retention: drop all but the newest 50
+```
+
+Every subcommand accepts `--json` for scripting and `--db-path` to operate on an
+alternative database file. Each saved scan is tagged with the script IDs it ran,
+the OS families it covered, and `host:<name>`, which is what `--tag` filters on.
+The same targets are available as `make db-list`, `make db-show SCAN_ID=12`, and
+`make db-prune KEEP=50`.
+
 ---
 
 ### Baselines & Accepted Risk
@@ -462,6 +489,9 @@ make help-dev # show developer targets (testing, linting, CI, formatting)
 | `make baseline-show` | `common/baseline.py show …` | List the waivers in the baseline file |
 | `make scan-baselined` | `… --baseline $(BASELINE)` | Scan, failing only on non-waived findings |
 | `make archive` | `zip reports/archive/…` | Zip all current reports |
+| `make db-list` | `common/db.py list` | List stored scans in the history database |
+| `make db-show` | `common/db.py show $(SCAN_ID)` | Show one stored scan and its findings |
+| `make db-prune` | `common/db.py prune --keep $(KEEP)` | Retention: keep only the newest `KEEP` scans |
 | `make clean` | `find . -name __pycache__ …` | Remove Python cache files |
 | `make clean-all` | *(clean + clean-reports)* | Remove cache + generated reports |
 
@@ -475,6 +505,8 @@ make scan-id    SCRIPTS="L07 L15 W16"     # specific script IDs
 make scan-tag   TAG=network               # tag filter
 make scan-delay DELAY=2                   # 2 s between scripts
 make report-trend TREND=20                # trend window
+make db-prune    KEEP=100                 # history retention
+make db-show     SCAN_ID=12               # inspect one stored scan
 make scan-baselined BASELINE=ci/prod.json # alternative baseline file
 make scan       VERBOSE=1                 # verbose runner output
 make scan       PYTHON=python3.11         # override Python binary
@@ -534,9 +566,9 @@ CyberSWISS exposes a built-in REST API (`common/api.py`) using Python's standard
 |--------|----------|-------------|
 | `GET`  | `/api/v1/health` | Health check and script count |
 | `GET`  | `/api/v1/scripts` | List all available audit scripts |
-| `POST` | `/api/v1/scan` | Start an async background scan |
+| `POST` | `/api/v1/scan` | Start an async background scan — body accepts `os`, `scripts`, `tags`, `min_severity`, `fix`, `timeout` |
 | `GET`  | `/api/v1/scan/{id}` | Poll scan status and retrieve results |
-| `GET`  | `/api/v1/history` | List past scans from the database |
+| `GET`  | `/api/v1/history` | List past scans — `?limit=N&host=NAME&tag=L07` |
 | `GET`  | `/api/v1/report/{id}` | Report for a saved scan — `?format=html\|json\|sarif\|markdown\|csv\|text` (default `html`) |
 | `GET`  | `/api/v1/drift/{id}` | Drift analysis vs the previous scan |
 | `GET`  | `/api/v1/trend` | Posture trend across recent scans — `?limit=N&host=NAME` |
@@ -546,10 +578,11 @@ CyberSWISS exposes a built-in REST API (`common/api.py`) using Python's standard
 # Start the API server
 python3 common/api.py --host 127.0.0.1 --port 8080
 
-# Trigger a scan
+# Trigger a scan (all selection knobs are optional)
 curl -s -X POST http://127.0.0.1:8080/api/v1/scan \
   -H 'Content-Type: application/json' \
-  -d '{"os":"linux","fix":false}' | python3 -m json.tool
+  -d '{"os":"linux","tags":["network"],"min_severity":"High","fix":false}' \
+  | python3 -m json.tool
 
 # List scan history
 curl -s http://127.0.0.1:8080/api/v1/history | python3 -m json.tool
@@ -751,9 +784,18 @@ Scan behaviour:
 Remediation:
   --fix                         Apply opt-in fixes (disabled by default)
 
+History & retention:
+  python3 common/db.py {list,show,trend,drift,prune} [--json]
+                                Inspect and prune the scan history database
+
+Baselines:
+  python3 common/baseline.py {create,show,apply}
+                                Manage accepted-risk waiver files
+
 REST API:
-  python3 common/api.py [--host HOST] [--port PORT]
-                                Start REST API server (default: 127.0.0.1:5000)
+  python3 common/api.py [--host HOST] [--port PORT] [--db-path FILE]
+                                Start REST API server (default: 0.0.0.0:8080;
+                                use --host 127.0.0.1 for local-only access)
 ```
 
 ---
@@ -808,6 +850,11 @@ make archive             # zip current reports
 make baseline            # record current findings as accepted risk
 make baseline-show       # list the waivers
 make scan-baselined      # fail only on non-waived findings
+
+# Scan history
+make db-list             # list stored scans
+make db-show SCAN_ID=12  # one scan and its findings
+make db-prune KEEP=50    # retention
 
 # Developer
 make test                # pytest

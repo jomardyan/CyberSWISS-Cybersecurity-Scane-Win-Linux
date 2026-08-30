@@ -44,7 +44,8 @@ _HTML_HEAD = """<!DOCTYPE html>
 <style>
 body {{ font-family: 'Segoe UI', Arial, sans-serif; background:#1a1a2e; color:#e0e0e0; margin:0; padding:20px; }}
 h1,h2,h3 {{ color:#00d4ff; }}
-.banner {{ background:#0f3460; border-left:5px solid #00d4ff; padding:15px 20px; margin-bottom:20px; border-radius:4px; }}
+.banner {{ background:#0f3460; border-left:5px solid #00d4ff; padding:15px 20px;
+           margin-bottom:20px; border-radius:4px; }}
 .stats {{ display:flex; gap:20px; flex-wrap:wrap; margin-bottom:20px; }}
 .stat-card {{ background:#16213e; padding:15px 25px; border-radius:8px; text-align:center; min-width:100px; }}
 .stat-card .num {{ font-size:2em; font-weight:bold; }}
@@ -73,7 +74,8 @@ footer {{ color:#666; font-size:0.8em; margin-top:40px; text-align:center; }}
 <body>
 <div class="banner">
   <h1>🔒 CyberSWISS Security Audit Report</h1>
-  <p>Host: <strong>{host}</strong> &nbsp;|&nbsp; Generated: <strong>{timestamp}</strong> &nbsp;|&nbsp; Internal Use Only</p>
+  <p>Host: <strong>{host}</strong> &nbsp;|&nbsp;
+     Generated: <strong>{timestamp}</strong> &nbsp;|&nbsp; Internal Use Only</p>
 </div>
 """
 

@@ -22,4 +22,10 @@
 # flask>=3.0.0
 
 # Development / testing
+# Required by: make test, make test-cov, make lint, make format
 pytest>=8.0.0
+pytest-cov>=5.0.0        # make test-cov
+flake8>=7.0.0            # make lint-python / make ci-lint
+pylint>=3.0.0            # make lint-pylint
+black>=24.0.0            # make format
+isort>=5.13.0            # make format
