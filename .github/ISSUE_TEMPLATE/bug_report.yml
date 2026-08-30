@@ -1,0 +1,98 @@
+name: Bug report
+description: A script, the orchestrator, the API, or the GUI behaves incorrectly
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Do not report security vulnerabilities here** — use
+        [private vulnerability reporting](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/security)
+        instead. See [SECURITY.md](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Command to reproduce
+      description: The exact command you ran.
+      render: shell
+      placeholder: sudo python3 common/runner.py --scripts L07 --json
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: |
+        Relevant output. **Redact anything sensitive** — hostnames, IPs, paths, and
+        finding details describe your environment.
+      render: shell
+
+  - type: input
+    id: script-id
+    attributes:
+      label: Affected script ID
+      description: If a specific check is involved (e.g. L07, W16). Leave blank for orchestrator, API, or GUI issues.
+      placeholder: L07
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Linux audit script (linux/)
+        - Windows audit script (windows/)
+        - Orchestrator (common/runner.py)
+        - Reporting (common/report_generator.py)
+        - Scan history / drift / trend (common/db.py)
+        - Baselines (common/baseline.py)
+        - REST API (common/api.py)
+        - GUI (common/gui.py)
+        - Makefile / CI
+        - Documentation
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Ubuntu 24.04 / Windows Server 2022
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Python / shell version
+      placeholder: Python 3.11.9, Bash 5.2 / PowerShell 5.1
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit or version
+      description: Output of `git rev-parse --short HEAD`.
+      placeholder: a1b2c3d
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I reproduced this on the latest `main`
+          required: true
+        - label: I have redacted sensitive details from the output above
+          required: true
+        - label: This is not a security vulnerability (those go through private reporting)
+          required: true

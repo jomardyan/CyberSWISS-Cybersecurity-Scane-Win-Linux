@@ -1,0 +1,57 @@
+name: False positive / false negative
+description: A check reports a finding that is wrong, or misses one it should catch
+title: "[Finding]: "
+labels: ["false-positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when a check's *verdict* is wrong — it flags a correctly configured
+        system, or passes a system that is genuinely misconfigured.
+
+  - type: input
+    id: finding-id
+    attributes:
+      label: Finding ID
+      description: The ID from the report, e.g. L07-C3.
+      placeholder: L07-C3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which is it?
+      options:
+        - False positive — flagged, but the system is configured correctly
+        - False negative — passed, but the system is genuinely misconfigured
+        - Wrong severity
+        - Wrong or unhelpful remediation advice
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-config
+    attributes:
+      label: Actual configuration
+      description: |
+        The relevant config that the check misread — the file excerpt, registry value,
+        or command output. **Redact anything sensitive.**
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the check should conclude, and why
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and version
+      placeholder: RHEL 9.4
+    validations:
+      required: true

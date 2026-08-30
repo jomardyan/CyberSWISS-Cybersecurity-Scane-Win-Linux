@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/security
+    about: Vulnerabilities are reported privately, never as public issues. See SECURITY.md.
+  - name: Usage and CLI documentation
+    url: https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/blob/main/docs/USAGE.md
+    about: CLI reference, scheduling, SIEM integration, baselines, and trend analysis.
+  - name: Remediation guide
+    url: https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/blob/main/docs/REMEDIATION_GUIDE.md
+    about: Step-by-step fixes for every finding the 66 audit scripts produce.
+  - name: Runtime requirements
+    url: https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/blob/main/docs/RUNTIME_REQUIREMENTS.md
+    about: OS-level tools each script needs (nmap, auditd, OpenVAS, …).
