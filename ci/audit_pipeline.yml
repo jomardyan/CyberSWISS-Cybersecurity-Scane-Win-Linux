@@ -79,6 +79,12 @@ jobs:
     name: Orchestrator Integration
     runs-on: ubuntu-latest
 
+    # security-events: write lets the SARIF upload publish findings to the
+    # repository's Security → Code scanning tab.
+    permissions:
+      contents: read
+      security-events: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -113,12 +119,26 @@ jobs:
           print(f'Report OK: {data[\"scripts_run\"]} scripts, {data[\"total_findings\"]} findings')
           "
 
-      - name: Generate HTML report
+      - name: Generate HTML, SARIF and Markdown reports
         run: |
           python3 common/report_generator.py \
             /tmp/audit_report.json \
-            --html /tmp/audit_report.html \
+            --html     /tmp/audit_report.html \
+            --sarif    /tmp/audit_report.sarif \
+            --markdown /tmp/audit_report.md \
             || true
+
+      - name: Publish findings to the job summary
+        if: always()
+        run: cat /tmp/audit_report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true          # code scanning may not be enabled on forks
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: /tmp/audit_report.sarif
+          category: cyberswiss
 
       - name: Upload audit report
         uses: actions/upload-artifact@v4
@@ -127,4 +147,38 @@ jobs:
           path: |
             /tmp/audit_report.json
             /tmp/audit_report.html
+            /tmp/audit_report.sarif
+            /tmp/audit_report.md
           if-no-files-found: warn
+
+  # ── Baseline gate: fail only on findings that are not accepted risk ───────
+  baseline-gate:
+    name: Baseline Gate (new findings only)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Make scripts executable
+        run: chmod +x linux/*.sh
+
+      # Commit ci/baseline.json to the repository to record accepted risk.
+      # Create one with:  python3 common/runner.py --write-baseline ci/baseline.json
+      - name: Run audit against the committed baseline
+        run: |
+          if [ -f ci/baseline.json ]; then
+            python3 common/runner.py --os linux --timeout 60 \
+              --baseline ci/baseline.json --markdown - >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No ci/baseline.json committed – reporting without waivers."
+            python3 common/runner.py --os linux --timeout 60 \
+              --markdown - >> "$GITHUB_STEP_SUMMARY" || true
+          fi

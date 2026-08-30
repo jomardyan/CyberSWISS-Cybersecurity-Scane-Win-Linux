@@ -31,6 +31,16 @@ Usage examples
 
 # Apply automatic remediations:
     python runner.py --fix
+
+# Emit SARIF for GitHub code scanning and Markdown for the job summary:
+    python runner.py --sarif reports/audit.sarif --markdown -
+
+# Record today's findings as accepted risk, then gate CI on new findings only:
+    python runner.py --write-baseline baseline.json
+    python runner.py --baseline baseline.json
+
+# Show how the posture has moved across the last 10 stored scans:
+    python runner.py --trend 10
 """
 from __future__ import annotations
 
@@ -200,6 +210,45 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show drift report comparing current scan vs last saved scan (implies --save-db).",
     )
+    parser.add_argument(
+        "--sarif",
+        metavar="FILE",
+        default=None,
+        help="Write SARIF 2.1.0 report to FILE (use - for stdout) for GitHub code scanning.",
+    )
+    parser.add_argument(
+        "--markdown",
+        metavar="FILE",
+        default=None,
+        help="Write Markdown report to FILE (use - for stdout) for PR comments / CI job summaries.",
+    )
+    parser.add_argument(
+        "--baseline",
+        metavar="FILE",
+        default=None,
+        help="Suppress findings waived in the given baseline file; they no longer affect the exit code.",
+    )
+    parser.add_argument(
+        "--write-baseline",
+        metavar="FILE",
+        default=None,
+        help="Record this scan's FAIL/WARN findings as a baseline file of accepted risk.",
+    )
+    parser.add_argument(
+        "--baseline-expires",
+        metavar="YYYY-MM-DD",
+        default=None,
+        help="Expiry date written onto every entry created by --write-baseline.",
+    )
+    parser.add_argument(
+        "--trend",
+        type=positive_int,
+        nargs="?",
+        const=10,
+        default=None,
+        metavar="N",
+        help="Show a posture trend across the last N stored scans (default: 10).",
+    )
     return parser.parse_args()
 
 
@@ -328,8 +377,11 @@ def _print_findings_table(
     W = _term_width()
 
     total = len(findings)
-    fails = sum(1 for f in findings if f.get("status") == "FAIL")
-    warns = sum(1 for f in findings if f.get("status") == "WARN")
+    # Baselined findings are accepted risk: they are still displayed, but they
+    # must not drive the script's verdict.
+    fails = sum(1 for f in findings if f.get("status") == "FAIL" and not f.get("suppressed"))
+    warns = sum(1 for f in findings if f.get("status") == "WARN" and not f.get("suppressed"))
+    suppressed = sum(1 for f in findings if f.get("suppressed"))
 
     # Apply display filters
     filtered = filter_findings(findings, min_severity=min_severity, status_filter=status_filter)
@@ -355,7 +407,8 @@ def _print_findings_table(
     passes_txt   = _c(f"{pass_count} ✓", _STATUS_STYLE["PASS"], no_colour) if pass_count else ""
     fails_txt    = _c(f"{fails} ✗", _STATUS_STYLE["FAIL"], no_colour)    if fails else ""
     warns_txt    = _c(f"{warns} ⚠", _STATUS_STYLE["WARN"], no_colour)    if warns else ""
-    counts       = "  ".join(x for x in [fails_txt, warns_txt, passes_txt] if x)
+    supp_txt     = _c(f"{suppressed} ⊘", _DIM, no_colour)                 if suppressed else ""
+    counts       = "  ".join(x for x in [fails_txt, warns_txt, passes_txt, supp_txt] if x)
 
     sep = _c("─" * W, _DIM, no_colour)
     print(f"\n{sep}")
@@ -411,8 +464,12 @@ def _print_findings_table(
         )
         print(row)
 
+        # Accepted-risk row: a baselined finding needs no remediation prompt
+        if f.get("suppressed"):
+            reason = f.get("suppression_reason", "Accepted risk")
+            print(_c(f"    ⊘ Accepted risk (baseline): {_truncate(str(reason), W - 34)}", _DIM, no_colour))
         # Remedy row (indented, only for FAIL/WARN)
-        if remedy and status in ("FAIL", "WARN"):
+        elif remedy and status in ("FAIL", "WARN"):
             remedy_prefix = "    ↳ Remedy: "
             avail = W - len(remedy_prefix) - 2
             remedy_text = _truncate(remedy, avail)
@@ -629,6 +686,29 @@ def _run_with_spinner(s: dict, timeout: int, fix_mode: bool, no_colour: bool) ->
     return result_holder[0]
 
 
+# ── Trend helper ───────────────────────────────────────────────────────────────
+def emit_trend(limit: int, no_colour: bool, json_mode: bool) -> dict | None:
+    """
+    Fetch and render the posture trend across the last *limit* stored scans.
+
+    Returns the trend dict so JSON callers can embed it, or ``None`` when the
+    history database is unavailable.
+    """
+    try:
+        from db import ScanDatabase, format_trend_report  # noqa: PLC0415
+
+        trend = ScanDatabase().get_trend(limit=limit, host=current_host())
+        if not trend.get("points"):
+            # Fall back to every host when this host has no history yet.
+            trend = ScanDatabase().get_trend(limit=limit)
+        if not json_mode:
+            print("\n" + format_trend_report(trend, no_colour=no_colour))
+        return trend
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: Trend analysis failed: {exc}", file=sys.stderr)
+        return None
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main() -> int:
     args = parse_args()
@@ -639,6 +719,18 @@ def main() -> int:
 
     if not args.json:
         print_banner()
+
+    # Load the baseline before running anything: a malformed waiver file must
+    # not be discovered only after a full audit has been executed.
+    baseline_data = None
+    if args.baseline:
+        try:
+            from baseline import load_baseline  # noqa: PLC0415
+
+            baseline_data = load_baseline(args.baseline)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
 
     scripts = select_scripts(args)
 
@@ -662,6 +754,10 @@ def main() -> int:
             print(f"\nDry-run: {len(scripts)} script(s) would run:\n")
             for s in scripts:
                 print(f"  {s['id']:6s}  {s['os']:8s}  {s['lang']:12s}  {s['path']}")
+        if args.trend:
+            trend = emit_trend(args.trend, args.no_colour or args.json, args.json)
+            if args.json and trend is not None:
+                print(json.dumps({"trend": trend}, indent=2, default=str))
         return 0
 
     if not args.json:
@@ -730,13 +826,19 @@ def main() -> int:
 
     # ── Consolidate ────────────────────────────────────────────────────────────
     consolidated = build_consolidated_report(all_results)
+
+    if baseline_data is not None:
+        from baseline import apply_baseline, format_baseline_summary  # noqa: PLC0415
+
+        baseline_summary = apply_baseline(consolidated, baseline_data)
+        if not args.json:
+            print("\n" + format_baseline_summary(baseline_summary, no_colour=args.no_colour))
+
     grand_total = consolidated["total_findings"]
     grand_fails = consolidated["fail_count"]
     grand_warns = consolidated["warn_count"]
 
-    if args.json:
-        print(json.dumps(consolidated, indent=2, default=str))
-    else:
+    if not args.json:
         # ── Per-script tables ──────────────────────────────────────────────────
         for result in all_results:
             print_script_result(
@@ -753,10 +855,13 @@ def main() -> int:
         all_findings_flat = [
             f for r in all_results for f in r.get("findings", [])
         ]
-        count_crit = sum(1 for f in all_findings_flat if f.get("severity") == "Critical" and f.get("status") == "FAIL")
-        count_high = sum(1 for f in all_findings_flat if f.get("severity") == "High"     and f.get("status") == "FAIL")
-        count_med  = sum(1 for f in all_findings_flat if f.get("severity") == "Med"      and f.get("status") in ("FAIL", "WARN"))
-        count_warn = sum(1 for f in all_findings_flat if f.get("status") == "WARN")
+        # Suppressed findings are accepted risk and are reported separately.
+        live_findings = [f for f in all_findings_flat if not f.get("suppressed")]
+        count_supp = len(all_findings_flat) - len(live_findings)
+        count_crit = sum(1 for f in live_findings if f.get("severity") == "Critical" and f.get("status") == "FAIL")
+        count_high = sum(1 for f in live_findings if f.get("severity") == "High"     and f.get("status") == "FAIL")
+        count_med  = sum(1 for f in live_findings if f.get("severity") == "Med"      and f.get("status") in ("FAIL", "WARN"))
+        count_warn = sum(1 for f in live_findings if f.get("status") == "WARN")
         count_pass = sum(1 for f in all_findings_flat if f.get("status") == "PASS")
         count_info = sum(1 for f in all_findings_flat if f.get("status") == "INFO")
 
@@ -776,6 +881,8 @@ def main() -> int:
             ("PASS",     str(count_pass),          _STATUS_STYLE["PASS"]),
             ("INFO",     str(count_info),          _STATUS_STYLE["INFO"]),
         ]
+        if count_supp:
+            cards.append(("Waived", str(count_supp), _DIM))
         row_nums   = ""
         row_labels = ""
         for label, value, code in cards:
@@ -812,7 +919,10 @@ def main() -> int:
         print(_c(dbl, _DIM, nc))
 
     # ── Save report ────────────────────────────────────────────────────────────
-    if args.output or args.html or args.csv or args.text or args.save_db or args.diff:
+    if (
+        args.output or args.html or args.csv or args.text or args.save_db
+        or args.diff or args.sarif or args.markdown or args.write_baseline
+    ):
         report = consolidated
 
         if args.output:
@@ -859,6 +969,47 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 print(f"WARNING: Text generation failed: {exc}", file=sys.stderr)
 
+        if args.sarif:
+            try:
+                from report_generator import generate_sarif  # noqa: PLC0415
+                sarif_content = generate_sarif(report)
+                if args.sarif == "-":
+                    sys.stdout.write(sarif_content + "\n")
+                else:
+                    Path(args.sarif).parent.mkdir(parents=True, exist_ok=True)
+                    Path(args.sarif).write_text(sarif_content, encoding="utf-8")
+                    if not args.json:
+                        print(f"SARIF report saved to: {args.sarif}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"WARNING: SARIF generation failed: {exc}", file=sys.stderr)
+
+        if args.markdown:
+            try:
+                from report_generator import generate_markdown  # noqa: PLC0415
+                md_content = generate_markdown(report)
+                if args.markdown == "-":
+                    sys.stdout.write(md_content)
+                else:
+                    Path(args.markdown).parent.mkdir(parents=True, exist_ok=True)
+                    Path(args.markdown).write_text(md_content, encoding="utf-8")
+                    if not args.json:
+                        print(f"Markdown report saved to: {args.markdown}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"WARNING: Markdown generation failed: {exc}", file=sys.stderr)
+
+        if args.write_baseline:
+            try:
+                from baseline import build_baseline, save_baseline  # noqa: PLC0415
+                new_baseline = build_baseline(report, expires=args.baseline_expires)
+                save_baseline(new_baseline, args.write_baseline)
+                if not args.json:
+                    print(
+                        f"Baseline written to: {args.write_baseline} "
+                        f"({len(new_baseline['entries'])} accepted finding(s))"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                print(f"WARNING: Baseline generation failed: {exc}", file=sys.stderr)
+
         # ── Scan history DB & drift detection ─────────────────────────────────
         if args.save_db or args.diff:
             try:
@@ -867,13 +1018,13 @@ def main() -> int:
                 if args.diff:
                     # Capture drift BEFORE saving the current scan
                     drift = db.detect_drift(report)
-                    if drift["has_drift"]:
-                        drift_text = format_drift_report(drift, no_colour=args.no_colour or args.json)
-                        if args.json:
-                            report["drift"] = drift
-                        else:
-                            print("\n" + drift_text)
-                    elif not args.json:
+                    if args.json:
+                        # Always emitted in JSON mode so consumers can rely on
+                        # the key being present, drift or not.
+                        report["drift"] = drift
+                    elif drift["has_drift"]:
+                        print("\n" + format_drift_report(drift, no_colour=args.no_colour))
+                    else:
                         print("\nDrift detection: No changes detected vs last scan.")
                 scan_id = db.save_scan(report)
                 if not args.json:
@@ -881,7 +1032,18 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 print(f"WARNING: DB operation failed: {exc}", file=sys.stderr)
 
-    # Exit code: 0=all pass, 1=warnings, 2=failures
+    if args.trend:
+        trend = emit_trend(args.trend, args.no_colour or args.json, args.json)
+        if args.json and trend is not None:
+            consolidated["trend"] = trend
+
+    # Printed last so that drift and trend data gathered after the scan are
+    # part of the emitted document.
+    if args.json:
+        print(json.dumps(consolidated, indent=2, default=str))
+
+    # Exit code: 0=all pass, 1=warnings, 2=failures.
+    # Findings waived by a baseline are excluded by expected_exit_code().
     return expected_exit_code([finding for result in all_results for finding in result.get("findings", [])])
 
 

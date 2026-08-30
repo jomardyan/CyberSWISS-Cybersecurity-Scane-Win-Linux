@@ -606,6 +606,8 @@ class CyberSWISSApp(tk.Tk):
         file_menu.add_command(label="Save HTML", command=self._save_html)
         file_menu.add_command(label="Save CSV", command=self._save_csv)
         file_menu.add_command(label="Save Text", command=self._save_text)
+        file_menu.add_command(label="Save SARIF", command=self._save_sarif)
+        file_menu.add_command(label="Save Markdown", command=self._save_markdown)
         file_menu.add_separator()
         file_menu.add_command(label="Quick Snapshot", command=self._quick_save_snapshot, accelerator="Ctrl+S")
         file_menu.add_command(label="Open Last Snapshot", command=self._open_last_snapshot)
@@ -2198,6 +2200,42 @@ class CyberSWISSApp(tk.Tk):
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("CyberSWISS", f"Text export failed:\n{exc}")
 
+    def _save_sarif(self) -> None:
+        if not self._require_results():
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".sarif",
+            filetypes=[("SARIF Files", "*.sarif"), ("JSON Files", "*.json"), ("All Files", "*.*")],
+            initialfile="cyberswiss_audit.sarif",
+        )
+        if not path:
+            return
+        try:
+            from report_generator import generate_sarif  # noqa: PLC0415
+
+            Path(path).write_text(generate_sarif(self._build_report_dict()), encoding="utf-8")
+            self._status_left_var.set(f"Saved SARIF report to {path}")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("CyberSWISS", f"SARIF export failed:\n{exc}")
+
+    def _save_markdown(self) -> None:
+        if not self._require_results():
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".md",
+            filetypes=[("Markdown Files", "*.md"), ("All Files", "*.*")],
+            initialfile="cyberswiss_audit.md",
+        )
+        if not path:
+            return
+        try:
+            from report_generator import generate_markdown  # noqa: PLC0415
+
+            Path(path).write_text(generate_markdown(self._build_report_dict()), encoding="utf-8")
+            self._status_left_var.set(f"Saved Markdown report to {path}")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("CyberSWISS", f"Markdown export failed:\n{exc}")
+
     def _quick_save_snapshot(self) -> None:
         if not self._require_results():
             return
@@ -2208,12 +2246,20 @@ class CyberSWISSApp(tk.Tk):
         report = self._build_report_dict()
 
         try:
-            from report_generator import generate_csv, generate_html, generate_text  # noqa: PLC0415
+            from report_generator import (  # noqa: PLC0415
+                generate_csv,
+                generate_html,
+                generate_markdown,
+                generate_sarif,
+                generate_text,
+            )
 
             base.with_suffix(".json").write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
             base.with_suffix(".html").write_text(generate_html(report), encoding="utf-8")
             base.with_suffix(".csv").write_text(generate_csv(report), encoding="utf-8")
             base.with_suffix(".txt").write_text(generate_text(report), encoding="utf-8")
+            base.with_suffix(".sarif").write_text(generate_sarif(report), encoding="utf-8")
+            base.with_suffix(".md").write_text(generate_markdown(report), encoding="utf-8")
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("CyberSWISS", f"Snapshot export failed:\n{exc}")
             return

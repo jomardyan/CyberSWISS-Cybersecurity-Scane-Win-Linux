@@ -44,6 +44,8 @@ SCRIPTS     ?=
 MIN_SEV     ?= Info
 DELAY       ?= 0
 TAG         ?=
+BASELINE    ?= ci/baseline.json
+TREND       ?= 10
 
 # Verbose flag: VERBOSE=1 passes --verbose to the runner
 _VERBOSE    := $(if $(filter 1,$(VERBOSE)),--verbose,)
@@ -119,8 +121,9 @@ endef
     check-env install install-all \
     scan scan-linux scan-windows \
     scan-high scan-critical scan-sev \
-    scan-dry scan-fix scan-id scan-tag scan-delay \
-    report report-db report-diff \
+    scan-dry scan-fix scan-id scan-tag scan-delay scan-baselined \
+    report report-db report-diff report-sarif report-trend \
+    baseline baseline-show \
     archive archive-clean \
     db-clean clean clean-reports clean-all \
     check-python check-runner check-lint-tools upgrade \
@@ -162,8 +165,15 @@ help:
 	@printf '  $(CYN)%-26s$(RST) %s\n' report          "Full scan → timestamped JSON + CSV + HTML"
 	@printf '  $(CYN)%-26s$(RST) %s\n' report-db       "report + save to DB and show drift"
 	@printf '  $(CYN)%-26s$(RST) %s\n' report-diff     "Show drift vs previous DB entry (no re-scan)"
+	@printf '  $(CYN)%-26s$(RST) %s\n' report-sarif    "Full scan → SARIF (code scanning) + Markdown"
+	@printf '  $(CYN)%-26s$(RST) %s\n' "report-trend TREND=10" "Posture trend across the last N stored scans"
 	@printf '  $(CYN)%-26s$(RST) %s\n' archive         "Zip all reports into reports/archive/"
 	@printf '  $(CYN)%-26s$(RST) %s\n' archive-clean   "Remove archived zips older than 30 days"
+	@echo ''
+	@printf '$(BOLD)Baseline (accepted risk)$(RST)\n'
+	@printf '  $(CYN)%-26s$(RST) %s\n' baseline        "Record current findings as accepted risk"
+	@printf '  $(CYN)%-26s$(RST) %s\n' baseline-show   "List the waivers in the baseline file"
+	@printf '  $(CYN)%-26s$(RST) %s\n' scan-baselined  "Scan, failing only on non-waived findings"
 	@echo ''
 	@printf '$(BOLD)Cleanup$(RST)\n'
 	@printf '  $(CYN)%-26s$(RST) %s\n' clean           "Remove Python cache files"
@@ -178,6 +188,8 @@ help:
 	@printf '  $(YLW)%-26s$(RST) %s\n' "DELAY=2"              "Inter-script delay for scan-delay"
 	@printf '  $(YLW)%-26s$(RST) %s\n' "TAG=network"          "Tag filter for scan-tag"
 	@printf '  $(YLW)%-26s$(RST) %s\n' "VERBOSE=1"            "Enable verbose runner output"
+	@printf '  $(YLW)%-26s$(RST) %s\n' "BASELINE=ci/baseline.json" "Baseline file for baseline targets"
+	@printf '  $(YLW)%-26s$(RST) %s\n' "TREND=10"             "Scan window for report-trend"
 	@echo ''
 
 # =============================================================================
@@ -360,6 +372,39 @@ report-db: check-python check-runner
 report-diff: check-python check-runner
 	$(call _info,"Showing drift vs last DB entry (no re-scan)…")
 	$(PYTHON) $(RUNNER) --diff --dry-run $(_VERBOSE)
+
+report-sarif: check-python check-runner
+	@mkdir -p $(REPORT_DIR)
+	$(call _info,"Generating SARIF + Markdown for CI / code scanning…")
+	-$(PYTHON) $(RUNNER) $(_VERBOSE) \
+	    --sarif    $(REPORT_BASE).sarif \
+	    --markdown $(REPORT_BASE).md
+	@test -f "$(REPORT_BASE).sarif" || { printf '$(RED)[✘] SARIF generation failed – no output file written.$(RST)\n' >&2; exit 1; }
+	$(call _ok,"Reports written:")
+	@printf '  $(CYN)→$(RST) $(REPORT_BASE).sarif  (upload to GitHub code scanning)\n'
+	@printf '  $(CYN)→$(RST) $(REPORT_BASE).md     (PR comment / job summary)\n'
+
+report-trend: check-python check-runner
+	$(call _info,"Posture trend across the last $(TREND) stored scans…")
+	$(PYTHON) $(RUNNER) --trend $(TREND) --dry-run $(_VERBOSE)
+
+# =============================================================================
+# [USER] BASELINE  –  accepted-risk waivers
+# =============================================================================
+baseline: check-python check-runner
+	$(call _warn,"Recording every current FAIL/WARN finding as accepted risk in $(BASELINE).")
+	@mkdir -p $(dir $(BASELINE))
+	-$(PYTHON) $(RUNNER) $(_VERBOSE) --write-baseline $(BASELINE)
+	@test -f "$(BASELINE)" || { printf '$(RED)[✘] Baseline generation failed.$(RST)\n' >&2; exit 1; }
+	$(call _ok,"Baseline written to $(BASELINE) – edit it to record the real justification per finding.")
+
+baseline-show: check-python
+	$(call _info,"Contents of $(BASELINE):")
+	$(PYTHON) common/baseline.py show $(BASELINE)
+
+scan-baselined: check-python check-runner
+	$(call _info,"Scanning – findings waived in $(BASELINE) will not fail the run…")
+	$(PYTHON) $(RUNNER) --baseline $(BASELINE) $(_VERBOSE)
 
 archive:
 	@mkdir -p $(ARCHIVE_DIR)
