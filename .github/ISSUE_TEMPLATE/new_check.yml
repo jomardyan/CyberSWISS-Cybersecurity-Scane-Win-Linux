@@ -1,0 +1,70 @@
+name: Propose a new audit check
+description: Suggest a security control CyberSWISS should audit
+title: "[Check]: "
+labels: ["enhancement", "new-check"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        CyberSWISS is **defensive only** — checks detect, validate, and inventory.
+        Proposals that add offensive capability will be declined.
+
+  - type: input
+    id: control
+    attributes:
+      label: Control to audit
+      placeholder: Verify that systemd services do not run with NoNewPrivileges=false
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux only
+        - Windows only
+        - Both
+    validations:
+      required: true
+
+  - type: input
+    id: category
+    attributes:
+      label: Category
+      description: Existing category if it fits — this is what `--tags` filters on.
+      placeholder: Services Hardening
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Proposed severity
+      options: [Info, Low, Med, High, Critical]
+    validations:
+      required: true
+
+  - type: textarea
+    id: detection
+    attributes:
+      label: How would the check detect it?
+      description: The command, file, or registry key that reveals the state.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: remediation
+    attributes:
+      label: Remediation
+      description: How an operator fixes it. Can this be automated safely under `--fix`?
+    validations:
+      required: true
+
+  - type: input
+    id: reference
+    attributes:
+      label: Standard or benchmark reference
+      description: CIS benchmark item, STIG ID, NIST control, CVE, or vendor guidance.
+      placeholder: CIS Ubuntu 22.04 Benchmark 2.1.4

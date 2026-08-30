@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+title: "CyberSWISS: Enterprise Security Audit & Remediation Platform"
+message: "If you use CyberSWISS in your work, please cite this repository."
+type: software
+authors:
+  - name: "The CyberSWISS Contributors"
+    website: "https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux"
+repository-code: "https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux"
+url: "https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux"
+abstract: >-
+  CyberSWISS is a cross-platform security audit, hardening and compliance
+  scanner for Linux servers, Windows endpoints, and Active Directory
+  environments. It provides 66 agentless audit scripts (33 Bash and 33
+  PowerShell) covering system hardening, CIS baseline checks, vulnerability
+  and CVE scanning, secrets detection, SAST/SCA, infrastructure-as-code
+  scanning, and SOC 2 / HIPAA / GDPR compliance mapping, together with a
+  Python orchestrator, REST API, SQLite scan history with drift detection,
+  accepted-risk baselines, and SARIF output for CI/CD security gates.
+keywords:
+  - security-audit
+  - security-scanner
+  - compliance
+  - hardening
+  - cis-benchmark
+  - vulnerability-scanner
+  - devsecops
+  - sarif
+  - linux
+  - windows
+  - powershell
+  - bash
+license: MIT

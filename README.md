@@ -1,5 +1,11 @@
 # CyberSWISS – Enterprise Security Audit & Remediation Platform
 
+**Open-source security audit, hardening and compliance scanner for Linux and Windows.**
+66 CIS-aligned audit scripts (33 Bash + 33 PowerShell), a Python orchestrator, opt-in
+automated remediation, SARIF output for GitHub code scanning, SQLite scan history with
+drift detection, and SOC 2 / HIPAA / GDPR evidence reporting — self-hosted, agentless,
+and dependency-free.
+
 [![CI](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/actions/workflows/ci.yml/badge.svg)](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/downloads/)
@@ -48,7 +54,17 @@
 
 ## Overview
 
-**CyberSWISS** is a production-grade, cross-platform security audit and remediation platform built for endpoints, servers, and Active Directory environments. It provides **66 runnable audit scripts** (33 Windows PowerShell + 33 Linux Bash), a Python orchestrator, REST API server, SQLite scan history with drift detection and trend analytics, baseline waivers for accepted risk, multi-format reporting (HTML, JSON, CSV, plain-text, SARIF, Markdown), and a Tkinter GUI — all following a unified interface.
+**CyberSWISS** is a production-grade, cross-platform **security audit and remediation
+platform** for Linux servers, Windows endpoints, and Active Directory environments. It
+runs **66 agentless audit scripts** (33 Windows PowerShell + 33 Linux Bash) covering
+system hardening, CIS baseline checks, vulnerability and CVE scanning, secrets
+detection, SAST/SCA, IaC scanning, and regulatory compliance mapping.
+
+Around those scripts it provides a Python orchestrator, a REST API server, a SQLite scan
+history with drift detection and trend analytics, baseline waivers for accepted risk,
+multi-format reporting (HTML, JSON, CSV, plain-text, **SARIF**, Markdown), and a Tkinter
+GUI — all behind one unified interface. There are no third-party Python dependencies and
+nothing to install on the machines you scan.
 
 ### Design Principles
 
@@ -193,8 +209,10 @@ CyberSWISS/
 │   ├── gui.py                      # Tkinter GUI for interactive scanning
 │   └── utils.py                    # Shared utilities: script discovery, execution, filtering
 │
-├── .github/workflows/
-│   └── ci.yml                      # GitHub Actions pipeline (lint, test, audit, SARIF, gate)
+├── .github/
+│   ├── workflows/ci.yml            # GitHub Actions pipeline (lint, test, audit, SARIF, gate)
+│   ├── ISSUE_TEMPLATE/             # Bug, false-positive, new-check, feature forms
+│   └── PULL_REQUEST_TEMPLATE.md
 │
 ├── ci/
 │   └── README.md                   # Pipeline inputs (ci/baseline.json – accepted risk)
@@ -897,6 +915,9 @@ make ci                  # lint + test + scan-dry
 | [docs/REMEDIATION_GUIDE.md](docs/REMEDIATION_GUIDE.md) | Detailed per-finding remediation steps |
 | [docs/RUNTIME_REQUIREMENTS.md](docs/RUNTIME_REQUIREMENTS.md) | Full OS-level dependency list for all scripts |
 | [ci/README.md](ci/README.md) | Pipeline inputs — creating and maintaining `ci/baseline.json` |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, the CI gate, and how to add a new audit check |
+| [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy and secure deployment guidance |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community standards |
 
 ---
 
@@ -910,21 +931,36 @@ This platform is designed for **authorized, internal security auditing only**.
 - Audit reports should be treated as sensitive documents and access-controlled accordingly
 - Only run on systems and networks for which you have **explicit written authorization**
 
+The REST API ships **without authentication by design** — bind it to `127.0.0.1` or put
+it behind an authenticating reverse proxy, never on an untrusted network.
+
+Found a vulnerability in CyberSWISS itself? Report it privately — see
+[SECURITY.md](SECURITY.md). Please do not open a public issue.
+
 ---
 
 ## Contributing
 
-Contributions are welcome. Please follow these guidelines:
+Contributions are welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)** for development
+setup, the CI gate, and a step-by-step guide to adding a new audit check.
 
-1. **Fork** the repository and create a feature branch from `main`
-2. **Add tests** — new scripts require corresponding entries in `tests/`
-3. **Follow conventions** — Bash scripts must pass `shellcheck`; Python must pass `flake8` (rules in `.flake8`) and `pylint` at threshold 8.0+. `make lint test` runs both plus the suite; `make ci` runs the full gate
-4. **Script naming** — use the next available ID prefix (`L##` / `W##`) followed by a descriptive snake_case name
-5. **Output contract** — scripts must emit at minimum: `CHECK_ID`, `STATUS` (`PASS` / `FAIL` / `WARN` / `INFO`), `SEVERITY`, and `MESSAGE` fields in JSON mode
-6. **No secrets** — never log credentials, tokens, or PII; all output must be safe for SIEM ingestion
-7. **Open a Pull Request** — include a description, the checks added or modified, and evidence that tests pass
+The short version:
 
-For significant changes, open an issue first to discuss the proposed approach.
+1. **Fork** and branch from `main`
+2. **Follow the contract** — defensive checks only, read-only unless `--fix` is passed,
+   and never emit credentials, tokens, or PII
+3. **Name scripts** with the next free ID (`L##` / `W##`) plus a snake_case description
+4. **Emit the finding fields** in JSON mode: `id`, `name`, `severity`, `status`,
+   `detail`, `remediation` — and exit `0` / `1` / `2`
+5. **Add tests** under `tests/` and update the docs in the same PR
+6. **Run `make ci`** — flake8, shellcheck, pylint (8.0+), the full suite, and a dry-run
+   scan. CI enforces the same gate
+7. **Open a Pull Request** using the template
+
+For significant changes, open an issue first to discuss the approach. Bugs, false
+positives, and new check proposals each have an
+[issue template](https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scan-Win-Linux/issues/new/choose).
+Security vulnerabilities go through [private reporting](SECURITY.md), not public issues.
 
 ---
 
