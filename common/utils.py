@@ -180,8 +180,13 @@ def save_json_report(data: dict, path: str | Path) -> None:
 
 
 def expected_exit_code(findings: list[dict[str, Any]] | None) -> int:
-    """Derive the canonical exit code from finding statuses."""
-    findings = findings or []
+    """
+    Derive the canonical exit code from finding statuses.
+
+    Findings marked ``suppressed`` by a baseline (see ``common/baseline.py``)
+    are accepted risk and never influence the exit code.
+    """
+    findings = [f for f in (findings or []) if not f.get("suppressed")]
     if any(f.get("status") == "FAIL" for f in findings):
         return 2
     if any(f.get("status") == "WARN" for f in findings):

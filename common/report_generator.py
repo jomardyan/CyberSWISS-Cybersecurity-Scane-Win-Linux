@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-CyberSWISS – HTML/JSON/CSV/Text Report Generator
-==================================================
+CyberSWISS – HTML/JSON/CSV/Text/SARIF/Markdown Report Generator
+================================================================
 Reads one or more JSON result files produced by runner.py and generates:
   - A consolidated JSON report
   - A self-contained HTML report with summary tables
   - A CSV report for spreadsheet analysis
   - A plain-text report for terminals/email
+  - A SARIF 2.1.0 report for GitHub code scanning and SAST dashboards
+  - A Markdown report for pull-request comments and CI job summaries
 
 Usage
 -----
@@ -14,6 +16,8 @@ Usage
     python report_generator.py results/audit.json --json reports/audit_report.json
     python report_generator.py results/audit.json --csv  reports/audit_report.csv
     python report_generator.py results/audit.json --text reports/audit_report.txt
+    python report_generator.py results/audit.json --sarif reports/audit.sarif
+    python report_generator.py results/audit.json --markdown - >> "$GITHUB_STEP_SUMMARY"
 """
 from __future__ import annotations
 
@@ -248,6 +252,310 @@ def generate_text(consolidated: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ── SARIF Generator ────────────────────────────────────────────────────────────
+SARIF_VERSION = "2.1.0"
+SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
+TOOL_INFORMATION_URI = "https://github.com/jomardyan/CyberSWISS-Cybersecurity-Scane-Win-Linux"
+
+#: CyberSWISS status → SARIF result level.  PASS findings are emitted as
+#: ``kind: pass`` with level ``none`` so evidence of a passing control is not
+#: lost, without raising an alert.
+_SARIF_LEVELS = {"FAIL": "error", "WARN": "warning", "INFO": "note", "PASS": "none"}
+
+#: Severity → the numeric ``security-severity`` GitHub code scanning uses to
+#: bucket alerts (Critical/High/Medium/Low).
+_SECURITY_SEVERITY = {
+    "Critical": "9.5",
+    "High": "8.0",
+    "Med": "5.5",
+    "Low": "3.0",
+    "Info": "1.0",
+}
+
+
+def _iter_findings(consolidated: dict):
+    """Yield ``(script_name, finding)`` pairs across every result."""
+    for result in consolidated.get("results", []):
+        script_name = result.get("script", "unknown")
+        for finding in result.get("findings", []):
+            yield script_name, finding
+
+
+def _script_uri(script_name: str) -> str:
+    """
+    Map a script name (e.g. ``L07_ssh_posture``) to its repo-relative path.
+
+    SARIF consumers such as GitHub code scanning anchor every result to a
+    file, so findings are attributed to the check script that produced them.
+    """
+    if not script_name or script_name == "unknown":
+        return "common/runner.py"
+    if script_name.upper().startswith("W"):
+        return f"windows/{script_name}.ps1"
+    if script_name.upper().startswith("L"):
+        return f"linux/{script_name}.sh"
+    return f"common/{script_name}"
+
+
+def _sarif_timestamp(value: object) -> str:
+    """Normalise an ISO timestamp to the ``...Z`` form SARIF requires."""
+    text = str(value or "").strip()
+    if not text:
+        text = datetime.now(tz=timezone.utc).isoformat()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = datetime.now(tz=timezone.utc)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def generate_sarif(consolidated: dict, include_passed: bool = False) -> str:
+    """
+    Render a consolidated report as SARIF 2.1.0 JSON.
+
+    SARIF is the interchange format consumed by GitHub code scanning, Azure
+    DevOps, and most SAST dashboards — uploading it surfaces CyberSWISS
+    findings alongside the repository's other security alerts.
+
+    Findings suppressed by a baseline are emitted with a SARIF ``suppressions``
+    entry, so downstream tools show them as accepted risk rather than as new
+    alerts.
+
+    Parameters
+    ----------
+    consolidated:
+        Consolidated report dict as produced by ``runner.py``.
+    include_passed:
+        When ``True``, PASS findings are included as ``kind: pass`` results.
+    """
+    rules: dict[str, dict] = {}
+    results: list[dict] = []
+
+    for script_name, finding in _iter_findings(consolidated):
+        status = str(finding.get("status", "")).upper()
+        if status == "PASS" and not include_passed:
+            continue
+
+        finding_id = str(finding.get("id") or f"{script_name}-unknown")
+        severity = str(finding.get("severity", "Info"))
+        name = str(finding.get("name", finding_id))
+        remediation = str(finding.get("remediation", ""))
+        detail = str(finding.get("detail", ""))
+        level = _SARIF_LEVELS.get(status, "note")
+
+        if finding_id not in rules:
+            rule: dict = {
+                "id": finding_id,
+                "name": name or finding_id,
+                "shortDescription": {"text": name or finding_id},
+                "fullDescription": {"text": detail or name or finding_id},
+                "defaultConfiguration": {"level": level},
+                "properties": {
+                    "tags": ["security", "cyberswiss", script_name],
+                    "security-severity": _SECURITY_SEVERITY.get(severity, "1.0"),
+                    "severity": severity,
+                },
+            }
+            if remediation:
+                rule["help"] = {
+                    "text": remediation,
+                    "markdown": f"**Remediation:** {remediation}",
+                }
+            rules[finding_id] = rule
+
+        message = f"[{severity}] {name}"
+        if detail:
+            message = f"{message}: {detail}"
+        if remediation and status in ("FAIL", "WARN"):
+            message = f"{message} — Remediation: {remediation}"
+
+        result: dict = {
+            "ruleId": finding_id,
+            "level": level,
+            "message": {"text": message},
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": _script_uri(script_name)},
+                        "region": {"startLine": 1},
+                    },
+                    "logicalLocations": [{"name": script_name, "kind": "module"}],
+                }
+            ],
+            "partialFingerprints": {"cyberswissFindingId": f"{script_name}/{finding_id}"},
+            "properties": {
+                "script": script_name,
+                "status": status,
+                "severity": severity,
+                "host": consolidated.get("host", "unknown"),
+            },
+        }
+        if status == "PASS":
+            result["kind"] = "pass"
+        if finding.get("suppressed"):
+            result["suppressions"] = [
+                {
+                    "kind": "external",
+                    "justification": str(
+                        finding.get("suppression_reason", "Accepted risk (CyberSWISS baseline)")
+                    ),
+                }
+            ]
+
+        results.append(result)
+
+    sarif = {
+        "$schema": SARIF_SCHEMA,
+        "version": SARIF_VERSION,
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "CyberSWISS",
+                        "fullName": "CyberSWISS Security Audit Platform",
+                        "informationUri": TOOL_INFORMATION_URI,
+                        "version": consolidated.get("version", "1.0.0"),
+                        "rules": list(rules.values()),
+                    }
+                },
+                "invocations": [
+                    {
+                        "executionSuccessful": True,
+                        "endTimeUtc": _sarif_timestamp(
+                            consolidated.get("generated_at", consolidated.get("timestamp"))
+                        ),
+                    }
+                ],
+                "results": results,
+            }
+        ],
+    }
+    return json.dumps(sarif, indent=2, default=str)
+
+
+# ── Markdown Generator ─────────────────────────────────────────────────────────
+def _md_escape(value: object) -> str:
+    """Escape the characters that would break a Markdown table cell."""
+    text = "" if value is None else str(value)
+    return text.replace("|", "\\|").replace("\n", " ").replace("\r", "").strip()
+
+
+def generate_markdown(consolidated: dict, max_findings: int = 100) -> str:
+    """
+    Render a consolidated report as Markdown.
+
+    Sized for a pull-request comment or a GitHub Actions job summary
+    (``$GITHUB_STEP_SUMMARY``): a verdict line, headline counts, a per-script
+    breakdown, and the actionable findings ordered by severity.
+
+    Parameters
+    ----------
+    consolidated:
+        Consolidated report dict as produced by ``runner.py``.
+    max_findings:
+        Maximum number of findings to tabulate; the remainder are summarised
+        as a count so the output stays within comment size limits.
+    """
+    all_findings = [dict(f, script=f.get("script", s)) for s, f in _iter_findings(consolidated)]
+    live = [f for f in all_findings if not f.get("suppressed")]
+
+    fails = sum(1 for f in live if f.get("status") == "FAIL")
+    warns = sum(1 for f in live if f.get("status") == "WARN")
+    passes = sum(1 for f in all_findings if f.get("status") == "PASS")
+    infos = sum(1 for f in all_findings if f.get("status") == "INFO")
+    suppressed = [f for f in all_findings if f.get("suppressed")]
+
+    host = consolidated.get("host", "unknown")
+    ts = consolidated.get("generated_at", consolidated.get("timestamp", ""))
+    scripts_run = consolidated.get("scripts_run", len(consolidated.get("results", [])))
+
+    if fails:
+        verdict = f"❌ **Audit failed** — {fails} failing control(s) require action."
+    elif warns:
+        verdict = f"⚠️ **Audit passed with warnings** — {warns} control(s) need review."
+    else:
+        verdict = "✅ **Audit passed** — no failing controls detected."
+
+    lines: list[str] = [
+        "## 🔒 CyberSWISS Security Audit",
+        "",
+        verdict,
+        "",
+        f"`Host: {_md_escape(host)}` · `Generated: {_md_escape(ts)}` · `Scripts: {scripts_run}`",
+        "",
+        "| FAIL | WARN | PASS | INFO | Suppressed | Total |",
+        "|-----:|-----:|-----:|-----:|-----------:|------:|",
+        f"| {fails} | {warns} | {passes} | {infos} | {len(suppressed)} | {len(all_findings)} |",
+        "",
+    ]
+
+    # Per-script breakdown
+    lines.append("### Script summary")
+    lines.append("")
+    lines.append("| Script | FAIL | WARN | PASS | Total |")
+    lines.append("|---|-----:|-----:|-----:|------:|")
+    for result in consolidated.get("results", []):
+        script_findings = [f for f in result.get("findings", []) if not f.get("suppressed")]
+        lines.append(
+            f"| `{_md_escape(result.get('script', 'unknown'))}` "
+            f"| {sum(1 for f in script_findings if f.get('status') == 'FAIL')} "
+            f"| {sum(1 for f in script_findings if f.get('status') == 'WARN')} "
+            f"| {sum(1 for f in script_findings if f.get('status') == 'PASS')} "
+            f"| {len(result.get('findings', []))} |"
+        )
+    lines.append("")
+
+    # Actionable findings, worst first
+    actionable = sorted(
+        (f for f in live if f.get("status") in ("FAIL", "WARN")),
+        key=lambda f: (
+            -SEVERITY_ORDER.get(f.get("severity", ""), 0),
+            0 if f.get("status") == "FAIL" else 1,
+            str(f.get("id", "")),
+        ),
+    )
+    if actionable:
+        lines.append(f"### Findings requiring action ({len(actionable)})")
+        lines.append("")
+        lines.append("| Status | Severity | ID | Finding | Script | Remediation |")
+        lines.append("|---|---|---|---|---|---|")
+        for f in actionable[:max_findings]:
+            icon = "❌" if f.get("status") == "FAIL" else "⚠️"
+            lines.append(
+                f"| {icon} {_md_escape(f.get('status'))} "
+                f"| {_md_escape(f.get('severity'))} "
+                f"| `{_md_escape(f.get('id'))}` "
+                f"| {_md_escape(f.get('name'))} "
+                f"| `{_md_escape(f.get('script'))}` "
+                f"| {_md_escape(f.get('remediation'))} |"
+            )
+        if len(actionable) > max_findings:
+            lines.append("")
+            lines.append(f"_…and {len(actionable) - max_findings} further finding(s) — see the full report._")
+        lines.append("")
+
+    if suppressed:
+        lines.append("<details>")
+        lines.append(f"<summary>Accepted risk – {len(suppressed)} baselined finding(s)</summary>")
+        lines.append("")
+        lines.append("| ID | Finding | Severity | Reason |")
+        lines.append("|---|---|---|---|")
+        for f in suppressed:
+            lines.append(
+                f"| `{_md_escape(f.get('id'))}` | {_md_escape(f.get('name'))} "
+                f"| {_md_escape(f.get('severity'))} | {_md_escape(f.get('suppression_reason'))} |"
+            )
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("<sub>CyberSWISS – Internal Defensive Security Audit Platform | Authorised Use Only</sub>")
+    return "\n".join(lines) + "\n"
+
+
 # ── Argument Parsing ───────────────────────────────────────────────────────────
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -260,6 +568,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--json", metavar="FILE", help="Write consolidated JSON report to FILE")
     p.add_argument("--csv",  metavar="FILE", help="Write CSV report to FILE")
     p.add_argument("--text", metavar="FILE", help="Write plain-text report to FILE (use - for stdout)")
+    p.add_argument("--sarif", metavar="FILE", help="Write SARIF 2.1.0 report to FILE (use - for stdout)")
+    p.add_argument("--markdown", metavar="FILE", help="Write Markdown report to FILE (use - for stdout)")
+    p.add_argument(
+        "--sarif-include-passed",
+        action="store_true",
+        help="Include PASS findings in the SARIF output as 'kind: pass' results.",
+    )
     p.add_argument("--min-severity", choices=list(SEVERITY_ORDER.keys()), default=None)
     return p.parse_args()
 
@@ -339,6 +654,26 @@ def main() -> int:
             Path(args.text).parent.mkdir(parents=True, exist_ok=True)
             Path(args.text).write_text(text_content, encoding="utf-8")
             print(f"Text report saved to: {args.text}")
+        any_output = True
+
+    if args.sarif:
+        sarif_content = generate_sarif(consolidated, include_passed=args.sarif_include_passed)
+        if args.sarif == "-":
+            sys.stdout.write(sarif_content + "\n")
+        else:
+            Path(args.sarif).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.sarif).write_text(sarif_content, encoding="utf-8")
+            print(f"SARIF report saved to: {args.sarif}")
+        any_output = True
+
+    if args.markdown:
+        md_content = generate_markdown(consolidated)
+        if args.markdown == "-":
+            sys.stdout.write(md_content)
+        else:
+            Path(args.markdown).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.markdown).write_text(md_content, encoding="utf-8")
+            print(f"Markdown report saved to: {args.markdown}")
         any_output = True
 
     if not any_output:

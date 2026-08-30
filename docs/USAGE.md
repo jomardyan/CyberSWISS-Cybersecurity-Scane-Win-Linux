@@ -68,7 +68,16 @@ sudo python3 common/runner.py --os linux \
   --html reports/audit.html \
   --csv reports/audit.csv \
   --text reports/audit.txt \
+  --sarif reports/audit.sarif \
+  --markdown reports/audit.md \
   --save-db
+```
+
+Any output flag accepts `-` to write to stdout, which is what makes the Markdown
+report usable directly as a CI job summary:
+
+```bash
+python3 common/runner.py --os linux --markdown - >> "$GITHUB_STEP_SUMMARY"
 ```
 
 ### Filtered Audit (High severity only)
@@ -95,6 +104,77 @@ sudo python3 common/runner.py --os linux --save-db
 sudo python3 common/runner.py --os linux --save-db --diff
 # Exit code 2 if new FAIL findings detected
 ```
+
+### SARIF for GitHub Code Scanning
+```bash
+# Produce SARIF 2.1.0 and publish it to the repository Security tab
+python3 common/runner.py --os linux --sarif reports/audit.sarif
+
+# In a workflow (needs: permissions: security-events: write)
+#   - uses: github/codeql-action/upload-sarif@v3
+#     with:
+#       sarif_file: reports/audit.sarif
+#       category: cyberswiss
+```
+
+Severity maps to the `security-severity` score GitHub uses to bucket alerts
+(Critical 9.5, High 8.0, Med 5.5, Low 3.0, Info 1.0). Each result is anchored to
+the check script that produced it, so alerts link to `linux/L07_ssh_posture.sh`
+rather than to an arbitrary file. PASS findings are omitted unless
+`report_generator.py --sarif-include-passed` is used.
+
+### Baselines – Gate CI on New Findings Only
+```bash
+# 1. Record the current FAIL/WARN findings as accepted risk
+sudo python3 common/runner.py --os linux --write-baseline ci/baseline.json
+
+# 2. Optionally force every waiver to expire on a date
+sudo python3 common/runner.py --os linux \
+  --write-baseline ci/baseline.json --baseline-expires 2026-12-31
+
+# 3. Commit ci/baseline.json, then gate the pipeline on new findings only
+sudo python3 common/runner.py --os linux --baseline ci/baseline.json
+# Exit code 0 while every failure is waived; 2 as soon as something new appears
+```
+
+Edit the generated file to record the real justification, an owner, and an expiry
+per entry. `id` and `script` accept wildcards, so a whole family of checks can be
+waived at once:
+
+```json
+{
+  "id": "L20-*",
+  "script": "L20_sca_licenses",
+  "reason": "Copyleft review tracked in RISK-1182",
+  "owner": "security@example.com",
+  "expires": "2026-12-31"
+}
+```
+
+Waived findings remain visible in every report — flagged as accepted risk with
+their justification — and reappear automatically once `expires` passes.
+
+Inspect and manage baseline files directly:
+
+```bash
+python3 common/baseline.py show   ci/baseline.json
+python3 common/baseline.py create reports/audit.json -o ci/baseline.json
+python3 common/baseline.py apply  ci/baseline.json --report reports/audit.json
+```
+
+### Posture Trend Analysis
+```bash
+# How has the posture moved across the last 10 stored scans?
+python3 common/runner.py --trend 10 --dry-run
+
+# Trend as part of a live scan
+sudo python3 common/runner.py --os linux --save-db --trend 20
+```
+
+The report shows FAIL/WARN counts per scan, sparklines, an
+improving / degrading / stable verdict, and the scripts contributing the most
+failures in the latest scan. The same data is available as JSON from
+`GET /api/v1/trend?limit=10&host=NAME`.
 
 ### Rate-Limited Scanning (Evasion)
 ```bash
@@ -187,7 +267,10 @@ usage: runner.py [-h] [--os {windows,linux,both}] [--scripts ID [ID ...]]
                  [--min-severity SEV] [--status {PASS,FAIL,WARN,INFO} ...]
                  [--output FILE] [--timeout SEC] [--parallel N]
                  [--dry-run] [--no-colour] [--json] [--fix]
-                 [--delay SEC] [--save-db] [--diff]
+                 [--delay SEC] [--save-db] [--diff] [--trend [N]]
+                 [--sarif FILE] [--markdown FILE]
+                 [--baseline FILE] [--write-baseline FILE]
+                 [--baseline-expires YYYY-MM-DD]
 
 Options:
   --os {linux,windows,both}    Filter by OS (default: auto-detect current platform)
@@ -208,6 +291,13 @@ Options:
   --csv    FILE                Write CSV report to FILE
   
   --text   FILE                Write plain-text report to FILE
+
+  --sarif  FILE                Write SARIF 2.1.0 report to FILE
+                               Ingested by GitHub code scanning and SAST dashboards
+
+  --markdown FILE              Write Markdown report to FILE
+                               Sized for PR comments and CI job summaries
+                               (all output flags accept - for stdout)
   
   --json                       Output JSON to stdout (incompatible with --output)
   
@@ -231,6 +321,17 @@ Options:
   
   --diff                       Show drift vs last scan (requires --save-db)
                                Exits with code 2 if regressions detected (new FAILs)
+
+  --trend [N]                  Show posture trend across the last N stored scans
+                               (default: 10). Combine with --dry-run to skip re-scanning
+
+  --baseline FILE              Suppress findings waived in FILE. They stay in reports
+                               as accepted risk but do not affect the FAIL/WARN counts
+                               or the exit code
+
+  --write-baseline FILE        Record this scan's FAIL/WARN findings as a baseline
+
+  --baseline-expires DATE      Expiry (YYYY-MM-DD) written onto every new entry
   
   -h, --help                   Show help message
 ```

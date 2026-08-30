@@ -546,6 +546,132 @@ class ScanDatabase:
             logger.error("delete_scan error: %s", exc)
             return False
 
+    # ── Trend analytics ────────────────────────────────────────────────────────
+
+    def get_trend(self, limit: int = 10, host: str | None = None) -> dict:
+        """
+        Return a chronological posture trend across the most recent scans.
+
+        Drift answers "what changed since last time?"; a trend answers "are we
+        getting better or worse?" — the question a security programme is
+        actually judged on.
+
+        Parameters
+        ----------
+        limit:
+            Number of recent scans to include (oldest → newest in the output).
+        host:
+            Restrict the trend to a single hostname.
+
+        Returns
+        -------
+        dict
+            ``points``
+                One entry per scan, oldest first, each with ``scan_id``,
+                ``timestamp``, ``fail_count``, ``warn_count``,
+                ``total_findings``, ``scripts_run``, and per-severity FAIL
+                counts under ``severity``.
+            ``delta``
+                Change in FAIL/WARN counts between the first and last point.
+            ``direction``
+                ``improving``, ``degrading``, ``stable``, or ``unknown``
+                (fewer than two scans).
+            ``worst_scripts``
+                Scripts with the most FAIL findings in the latest scan.
+        """
+        empty: dict[str, Any] = {
+            "points": [],
+            "delta": {"fail_count": 0, "warn_count": 0, "total_findings": 0},
+            "direction": "unknown",
+            "scan_count": 0,
+            "host": host,
+            "worst_scripts": [],
+        }
+        if limit < 1:
+            return empty
+
+        try:
+            with self._connect() as conn:
+                params: list[Any] = []
+                where = ""
+                if host:
+                    where = "WHERE host = ?"
+                    params.append(host)
+                params.append(limit)
+                rows = conn.execute(
+                    f"""
+                    SELECT id, host, timestamp, scripts_run, fail_count,
+                           warn_count, total_findings
+                    FROM scans
+                    {where}
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
+
+                if not rows:
+                    return empty
+
+                points: list[dict[str, Any]] = []
+                for row in reversed(rows):  # oldest → newest
+                    point = dict(row)
+                    severity_rows = conn.execute(
+                        """
+                        SELECT severity, COUNT(*) AS count
+                        FROM findings
+                        WHERE scan_id = ? AND status = 'FAIL'
+                        GROUP BY severity
+                        """,
+                        (point["id"],),
+                    ).fetchall()
+                    point["scan_id"] = point.pop("id")
+                    point["severity"] = {r["severity"]: r["count"] for r in severity_rows}
+                    points.append(point)
+
+                latest_id = points[-1]["scan_id"]
+                worst_rows = conn.execute(
+                    """
+                    SELECT script, COUNT(*) AS fail_count
+                    FROM findings
+                    WHERE scan_id = ? AND status = 'FAIL'
+                    GROUP BY script
+                    ORDER BY fail_count DESC, script ASC
+                    LIMIT 5
+                    """,
+                    (latest_id,),
+                ).fetchall()
+
+            first, last = points[0], points[-1]
+            delta = {
+                "fail_count": last["fail_count"] - first["fail_count"],
+                "warn_count": last["warn_count"] - first["warn_count"],
+                "total_findings": last["total_findings"] - first["total_findings"],
+            }
+
+            if len(points) < 2:
+                direction = "unknown"
+            elif delta["fail_count"] < 0 or (delta["fail_count"] == 0 and delta["warn_count"] < 0):
+                direction = "improving"
+            elif delta["fail_count"] > 0 or delta["warn_count"] > 0:
+                direction = "degrading"
+            else:
+                direction = "stable"
+
+            return {
+                "points": points,
+                "delta": delta,
+                "direction": direction,
+                "scan_count": len(points),
+                "host": host,
+                "worst_scripts": [dict(r) for r in worst_rows],
+            }
+
+        except sqlite3.Error as exc:
+            print(f"[db] get_trend error: {exc}", file=sys.stderr)
+            logger.error("get_trend error: %s", exc)
+            return empty
+
 
 # ── Drift Report Formatting ────────────────────────────────────────────────────
 
@@ -632,4 +758,90 @@ def format_drift_report(drift: dict, no_colour: bool = False) -> str:
             )
 
     lines.append("\n" + "=" * 60)
+    return "\n".join(lines)
+
+
+# ── Trend Report Formatting ────────────────────────────────────────────────────
+_SPARK_LEVELS = "▁▂▃▄▅▆▇█"
+
+
+def _sparkline(values: list[int]) -> str:
+    """Render a list of counts as a compact unicode sparkline."""
+    if not values:
+        return ""
+    peak = max(values)
+    if peak == 0:
+        return _SPARK_LEVELS[0] * len(values)
+    step = len(_SPARK_LEVELS) - 1
+    return "".join(_SPARK_LEVELS[round(v / peak * step)] for v in values)
+
+
+def format_trend_report(trend: dict, no_colour: bool = False) -> str:
+    """
+    Format the dict returned by :meth:`ScanDatabase.get_trend` for a terminal.
+
+    Parameters
+    ----------
+    trend:
+        Dict as returned by ``ScanDatabase.get_trend()``.
+    no_colour:
+        When ``True`` ANSI escape codes are omitted.
+    """
+
+    def _c(text: str, code: str) -> str:
+        return text if no_colour else f"{code}{text}{_RESET}"
+
+    lines: list[str] = []
+    lines.append("=" * 60)
+    lines.append("  POSTURE TREND REPORT")
+    lines.append("=" * 60)
+
+    points = trend.get("points", [])
+    if not points:
+        lines.append("  No scan history available – run with --save-db first.")
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+    host = trend.get("host") or points[-1].get("host", "all hosts")
+    lines.append(f"  Host       : {host}")
+    lines.append(f"  Scans      : {len(points)}")
+    lines.append("")
+    lines.append("  Scan    Timestamp                        FAIL  WARN  Total")
+    lines.append("  " + "-" * 56)
+    for point in points:
+        lines.append(
+            f"  #{str(point.get('scan_id', '?')):<6} {str(point.get('timestamp', ''))[:30]:<32} "
+            f"{point.get('fail_count', 0):>4}  {point.get('warn_count', 0):>4}  "
+            f"{point.get('total_findings', 0):>5}"
+        )
+
+    fail_series = [int(p.get("fail_count", 0)) for p in points]
+    warn_series = [int(p.get("warn_count", 0)) for p in points]
+    lines.append("")
+    lines.append(f"  FAIL trend : {_sparkline(fail_series)}  (oldest → newest)")
+    lines.append(f"  WARN trend : {_sparkline(warn_series)}")
+
+    delta = trend.get("delta", {})
+    direction = trend.get("direction", "unknown")
+    fail_delta = delta.get("fail_count", 0)
+    warn_delta = delta.get("warn_count", 0)
+    arrow = {"improving": "▼", "degrading": "▲", "stable": "=", "unknown": "?"}.get(direction, "?")
+    colour = {"improving": _GREEN, "degrading": _RED}.get(direction, _YELLOW)
+    lines.append("")
+    lines.append(
+        _c(
+            f"  {arrow}  Posture is {direction.upper()}: "
+            f"FAIL {fail_delta:+d}, WARN {warn_delta:+d} across the window.",
+            colour,
+        )
+    )
+
+    worst = trend.get("worst_scripts", [])
+    if worst:
+        lines.append("")
+        lines.append(_c("  Top failing scripts (latest scan):", _CYAN))
+        for entry in worst:
+            lines.append(f"     {entry.get('fail_count', 0):>3} FAIL  {entry.get('script', '?')}")
+
+    lines.append("=" * 60)
     return "\n".join(lines)

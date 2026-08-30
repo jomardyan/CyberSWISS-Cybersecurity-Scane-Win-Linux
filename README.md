@@ -25,6 +25,8 @@
   - [Run Audits](#run-audits)
   - [Reporting](#reporting)
   - [Drift Detection](#drift-detection)
+  - [Trend Analysis](#trend-analysis)
+  - [Baselines & Accepted Risk](#baselines--accepted-risk)
   - [Remediation](#remediation)
   - [GUI](#gui)
   - [REST API Server](#rest-api-server)
@@ -48,7 +50,7 @@
 
 ## Overview
 
-**CyberSWISS** is a production-grade, cross-platform security audit and remediation platform built for endpoints, servers, and Active Directory environments. It provides **66 runnable audit scripts** (33 Windows PowerShell + 33 Linux Bash), a Python orchestrator, REST API server, SQLite scan history with drift detection, multi-format reporting (HTML, JSON, CSV, plain-text), and a Tkinter GUI — all following a unified interface.
+**CyberSWISS** is a production-grade, cross-platform security audit and remediation platform built for endpoints, servers, and Active Directory environments. It provides **66 runnable audit scripts** (33 Windows PowerShell + 33 Linux Bash), a Python orchestrator, REST API server, SQLite scan history with drift detection and trend analytics, baseline waivers for accepted risk, multi-format reporting (HTML, JSON, CSV, plain-text, SARIF, Markdown), and a Tkinter GUI — all following a unified interface.
 
 ### Design Principles
 
@@ -60,7 +62,8 @@
 | **SIEM-ready** | Every script supports `--json` / `-Json` for structured, machine-readable output |
 | **AD/GPO compatible** | W16 enforces domain policy via GPO-safe registry writes; no RSAT required |
 | **Drift detection** | Built-in SQLite history surfaces new, resolved, and changed findings across successive scans |
-| **CI/CD ready** | `--diff` flag returns exit code `2` on regressions; GitHub Actions workflow included |
+| **CI/CD ready** | `--diff` flag returns exit code `2` on regressions; SARIF output feeds GitHub code scanning; GitHub Actions workflow included |
+| **Accepted risk is explicit** | Signed-off findings live in a versioned baseline file with an expiry date — never in a silent code change |
 
 ---
 
@@ -119,7 +122,11 @@ CyberSWISS directly addresses the business risk that undetected security gaps cr
 |---|---|
 | **66 modular scripts** | Each security domain is its own script — run any subset with `--scripts L07 L21 W16` |
 | **Opt-in remediation** | `--fix` / `-Fix` applies fixes only when explicitly requested; destructive operations include a 10-second abort window |
-| **Multi-format output** | JSON, HTML, CSV, or plain-text — all generated in one pass |
+| **Multi-format output** | JSON, HTML, CSV, plain-text, SARIF, or Markdown — all generated in one pass |
+| **SARIF 2.1.0 output** | `--sarif` publishes findings straight to GitHub code scanning, Azure DevOps, or any SAST dashboard |
+| **Markdown output** | `--markdown` produces a PR comment or GitHub Actions job summary — verdict, counts, and the findings that need action |
+| **Baseline waivers** | `--baseline` suppresses formally accepted findings (with wildcards and expiry dates) so CI breaks only on *new* risk |
+| **Trend analytics** | `--trend N` shows whether the posture is improving or degrading across the last N stored scans |
 | **Scan history & drift detection** | SQLite backend with `--save-db` + `--diff` for regression tracking |
 | **REST API server** | 8 endpoints with async scan support, history management, HTML reports, and drift analysis |
 | **Interactive GUI** | Tkinter-based point-and-click scanning; no CLI knowledge required |
@@ -180,8 +187,9 @@ CyberSWISS/
 │
 ├── common/                         # Python orchestrator & utilities
 │   ├── runner.py                   # CLI orchestrator — main entry point
-│   ├── report_generator.py         # Multi-format report generation (HTML, JSON, CSV, TXT)
-│   ├── db.py                       # SQLite scan history, drift detection, query interface
+│   ├── report_generator.py         # Multi-format reports (HTML, JSON, CSV, TXT, SARIF, MD)
+│   ├── db.py                       # SQLite scan history, drift detection, trend analytics
+│   ├── baseline.py                 # Accepted-risk waivers (suppression, expiry, wildcards)
 │   ├── api.py                      # REST API v1 server (8 endpoints, async scan support)
 │   ├── gui.py                      # Tkinter GUI for interactive scanning
 │   └── utils.py                    # Shared utilities: script discovery, execution, filtering
@@ -198,6 +206,7 @@ CyberSWISS/
 ├── tests/
 │   ├── test_runner.py              # Orchestration & CLI argument tests
 │   ├── test_extended.py            # DB, API, report generation & new-script tests
+│   ├── test_governance.py          # Baselines, SARIF/Markdown output, trend analytics
 │   └── test_utils.py              # Utility function tests
 │
 ├── setup/
@@ -275,11 +284,27 @@ Generate all output formats in a single pass:
 
 ```bash
 sudo python3 common/runner.py --os linux \
-  --output reports/audit.json \
-  --html   reports/audit.html \
-  --csv    reports/audit.csv  \
-  --text   reports/audit.txt  \
+  --output   reports/audit.json \
+  --html     reports/audit.html \
+  --csv      reports/audit.csv  \
+  --text     reports/audit.txt  \
+  --sarif    reports/audit.sarif \
+  --markdown reports/audit.md   \
   --save-db
+```
+
+**SARIF** (`--sarif`) is the format GitHub code scanning, Azure DevOps, and most SAST
+dashboards ingest — uploading it puts CyberSWISS findings in the repository's
+Security tab next to every other security alert. Severities map to
+`security-severity` scores (Critical 9.5 → Info 1.0), each result is anchored to the
+check script that produced it, and baselined findings are emitted as SARIF
+`suppressions` rather than as fresh alerts.
+
+**Markdown** (`--markdown`) is sized for a pull-request comment or a job summary.
+Write it straight into the GitHub Actions summary panel:
+
+```bash
+python3 common/runner.py --os linux --markdown - >> "$GITHUB_STEP_SUMMARY"
 ```
 
 ---
@@ -294,6 +319,88 @@ sudo python3 common/runner.py --os linux --save-db
 # exits with code 2 if new regressions are detected (useful for CI gates)
 sudo python3 common/runner.py --os linux --save-db --diff
 ```
+
+---
+
+### Trend Analysis
+
+Drift answers *"what changed since last time?"*. A trend answers *"are we getting
+better or worse?"* — the question a security programme is actually judged on.
+
+```bash
+# Posture across the last 10 stored scans (add --dry-run to skip re-scanning)
+python3 common/runner.py --trend 10 --dry-run
+```
+
+```
+  Scan    Timestamp                        FAIL  WARN  Total
+  --------------------------------------------------------
+  #1      2026-03-01T09:00:00+00:00           9     4     41
+  #2      2026-03-08T09:00:00+00:00           6     4     41
+  #3      2026-03-15T09:00:00+00:00           2     1     41
+
+  FAIL trend : █▆▂  (oldest → newest)
+  WARN trend : █████
+
+  ▼  Posture is IMPROVING: FAIL -7, WARN -3 across the window.
+
+  Top failing scripts (latest scan):
+       2 FAIL  L06_firewall_state
+```
+
+`GET /api/v1/trend?limit=10&host=web-prod-01` returns the same data as JSON.
+
+---
+
+### Baselines & Accepted Risk
+
+Some findings are known, reviewed, and formally accepted — a compensating control
+is in place, or the business has signed off the risk. Re-reporting them on every
+run buries genuinely new problems and makes a CI gate unusable.
+
+A **baseline** is a JSON file of those accepted findings. Matched findings stay in
+the report, marked as accepted risk, but no longer count towards FAIL/WARN or the
+exit code:
+
+```bash
+# 1. Record today's FAIL/WARN findings as accepted risk
+sudo python3 common/runner.py --os linux --write-baseline ci/baseline.json
+
+# 2. Edit ci/baseline.json to record the real justification and an expiry date
+
+# 3. Gate CI on new findings only – exits 0 while nothing new appears
+sudo python3 common/runner.py --os linux --baseline ci/baseline.json
+```
+
+```json
+{
+  "cyberswiss_baseline": true,
+  "version": 1,
+  "host": "web-prod-01",
+  "entries": [
+    {
+      "id": "L01-C1",
+      "script": "L01_password_policy",
+      "severity": "High",
+      "status": "FAIL",
+      "reason": "Accepted – legacy payroll app cannot rotate credentials",
+      "owner": "security@example.com",
+      "expires": "2026-12-31"
+    }
+  ]
+}
+```
+
+| Behaviour | Detail |
+|---|---|
+| **Wildcards** | `id` and `script` accept shell-style patterns (`L01-*`, `W2?_*`) to waive a whole family of checks |
+| **Expiry** | Once `expires` passes, the waiver stops suppressing and the finding is reported again — waivers cannot silently become permanent |
+| **Never hidden** | Suppressed findings stay in every report, flagged as accepted risk with their justification |
+| **PASS is not waivable** | Only FAIL and WARN findings can be baselined |
+| **Hygiene** | Waivers that matched nothing are listed as candidates for removal |
+
+Manage baseline files directly with `python3 common/baseline.py {create,show,apply}`,
+or through `make baseline`, `make baseline-show`, and `make scan-baselined`.
 
 ---
 
@@ -349,6 +456,11 @@ make help-dev # show developer targets (testing, linting, CI, formatting)
 | `make report` | `python3 common/runner.py --output … --csv … --html …` | Full scan → timestamped JSON + CSV + HTML |
 | `make report-db` | `… --save-db --diff` | report + persist to DB + show drift |
 | `make report-diff` | `… --diff --dry-run` | Show drift vs last DB entry (no re-scan) |
+| `make report-sarif` | `… --sarif … --markdown …` | Full scan → SARIF + Markdown for CI / code scanning |
+| `make report-trend` | `… --trend N --dry-run` | Posture trend across the last `TREND` stored scans |
+| `make baseline` | `… --write-baseline $(BASELINE)` | Record current findings as accepted risk |
+| `make baseline-show` | `common/baseline.py show …` | List the waivers in the baseline file |
+| `make scan-baselined` | `… --baseline $(BASELINE)` | Scan, failing only on non-waived findings |
 | `make archive` | `zip reports/archive/…` | Zip all current reports |
 | `make clean` | `find . -name __pycache__ …` | Remove Python cache files |
 | `make clean-all` | *(clean + clean-reports)* | Remove cache + generated reports |
@@ -362,6 +474,8 @@ make scan-sev   MIN_SEV=Critical          # severity filter
 make scan-id    SCRIPTS="L07 L15 W16"     # specific script IDs
 make scan-tag   TAG=network               # tag filter
 make scan-delay DELAY=2                   # 2 s between scripts
+make report-trend TREND=20                # trend window
+make scan-baselined BASELINE=ci/prod.json # alternative baseline file
 make scan       VERBOSE=1                 # verbose runner output
 make scan       PYTHON=python3.11         # override Python binary
 ```
@@ -423,8 +537,9 @@ CyberSWISS exposes a built-in REST API (`common/api.py`) using Python's standard
 | `POST` | `/api/v1/scan` | Start an async background scan |
 | `GET`  | `/api/v1/scan/{id}` | Poll scan status and retrieve results |
 | `GET`  | `/api/v1/history` | List past scans from the database |
-| `GET`  | `/api/v1/report/{id}` | HTML report for a saved scan |
+| `GET`  | `/api/v1/report/{id}` | Report for a saved scan — `?format=html\|json\|sarif\|markdown\|csv\|text` (default `html`) |
 | `GET`  | `/api/v1/drift/{id}` | Drift analysis vs the previous scan |
+| `GET`  | `/api/v1/trend` | Posture trend across recent scans — `?limit=N&host=NAME` |
 | `DELETE` | `/api/v1/scan/{id}` | Delete a scan from history |
 
 ```bash
@@ -438,6 +553,12 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/scan \
 
 # List scan history
 curl -s http://127.0.0.1:8080/api/v1/history | python3 -m json.tool
+
+# Fetch a stored scan as SARIF and upload it to code scanning
+curl -s "http://127.0.0.1:8080/api/v1/report/1?format=sarif" -o audit.sarif
+
+# Ask whether the posture is improving
+curl -s "http://127.0.0.1:8080/api/v1/trend?limit=10" | python3 -m json.tool
 ```
 
 ---
@@ -601,15 +722,25 @@ Filtering:
   --status STAT [STAT ...]      Filter output by finding status (PASS FAIL WARN INFO)
 
 Output formats:
-  --output FILE                 Write JSON results to FILE
-  --html   FILE                 Write HTML report to FILE
-  --csv    FILE                 Write CSV report to FILE
-  --text   FILE                 Write plain-text report to FILE
+  --output   FILE               Write JSON results to FILE
+  --html     FILE               Write HTML report to FILE
+  --csv      FILE               Write CSV report to FILE
+  --text     FILE               Write plain-text report to FILE
+  --sarif    FILE               Write SARIF 2.1.0 report to FILE (GitHub code scanning)
+  --markdown FILE               Write Markdown report to FILE (PR comment / job summary)
+                                  Any of the above accept - for stdout
   --json                        Print JSON to stdout
 
-History & drift:
+History, drift & trend:
   --save-db                     Persist results to SQLite scan history database
   --diff                        Show drift vs last scan; exit code 2 on new regressions
+  --trend [N]                   Show posture trend across the last N scans (default: 10)
+
+Baselines (accepted risk):
+  --baseline FILE               Suppress findings waived in FILE; they no longer
+                                  affect FAIL/WARN counts or the exit code
+  --write-baseline FILE         Record this scan's FAIL/WARN findings as a baseline
+  --baseline-expires DATE       Expiry (YYYY-MM-DD) written onto every new entry
 
 Scan behaviour:
   --delay  SEC                  Sleep SEC seconds between scripts (IDS/rate-limit evasion)
@@ -636,6 +767,9 @@ REST API:
 | `0` | All checks passed |
 | `1` | At least one WARNING |
 | `2` | At least one FAILURE, or new regressions detected with `--diff` |
+
+Findings waived by a `--baseline` file are excluded from this calculation — an
+audit whose every failure is formally accepted exits `0`.
 
 ---
 
@@ -666,7 +800,14 @@ make scan-sev MIN_SEV=Critical
 # Reporting
 make report              # JSON + CSV + HTML (timestamped)
 make report-db           # + save to DB + drift
+make report-sarif        # SARIF (code scanning) + Markdown
+make report-trend        # posture trend across stored scans
 make archive             # zip current reports
+
+# Accepted risk
+make baseline            # record current findings as accepted risk
+make baseline-show       # list the waivers
+make scan-baselined      # fail only on non-waived findings
 
 # Developer
 make test                # pytest
